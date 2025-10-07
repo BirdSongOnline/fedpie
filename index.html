@@ -225,12 +225,12 @@
       const [expandedScores, setExpandedScores] = useState({});
       const [showSearchOptions, setShowSearchOptions] = useState(false);
       
-      // Search parameters
+      // Search parameters - using date format that works with HTML date inputs
       const [searchParams, setSearchParams] = useState({
-        postedFrom: '01/01/2025',
-        postedTo: '12/31/2025',
+        postedFrom: '2025-01-01',
+        postedTo: '2025-12-31',
         limit: 100,
-        searchMode: 'active' // 'active' or 'dateRange'
+        keywords: ''
       });
 
       const handleSaveProfile = (newProfile) => {
@@ -481,11 +481,17 @@
         setError(null);
         
         try {
+          // Convert YYYY-MM-DD to MM/DD/YYYY for SAM.gov API
+          const formatDateForAPI = (dateStr) => {
+            const [year, month, day] = dateStr.split('-');
+            return `${month}/${day}/${year}`;
+          };
+
           const params = new URLSearchParams({
-            postedFrom: '10/01/2025',
-            postedTo: '10/06/2025',
+            postedFrom: formatDateForAPI(searchParams.postedFrom),
+            postedTo: formatDateForAPI(searchParams.postedTo),
             ptype: 'o',
-            limit: '50' // Fetch more since we'll filter
+            limit: searchParams.limit.toString()
           });
 
           const response = await fetch(`${BACKEND_URL}?${params}`);
@@ -629,86 +635,6 @@
               </div>
             </div>
           </div>
-{showSearchOptions && (
-  <div className="max-w-7xl mx-auto mb-8 bg-white border border-gray-200 rounded-xl p-6 shadow-sm animate-fadeIn">
-    <h2 className="text-lg font-semibold mb-4 text-gray-900">Advanced Search Options</h2>
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {/* Date From */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">Posted From</label>
-        <input
-          type="date"
-          value={searchParams.postedFrom || ""}
-          onChange={(e) =>
-            setSearchParams({ ...searchParams, postedFrom: e.target.value })
-          }
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-        />
-      </div>
-
-      {/* Date To */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">Posted To</label>
-        <input
-          type="date"
-          value={searchParams.postedTo || ""}
-          onChange={(e) =>
-            setSearchParams({ ...searchParams, postedTo: e.target.value })
-          }
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-        />
-      </div>
-
-      {/* Result Limit */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">Result Limit</label>
-        <input
-          type="number"
-          min="1"
-          max="200"
-          value={searchParams.limit || 50}
-          onChange={(e) =>
-            setSearchParams({
-              ...searchParams,
-              limit: parseInt(e.target.value) || 50,
-            })
-          }
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-        />
-      </div>
-
-      {/* Keywords */}
-      <div className="md:col-span-2 lg:col-span-3">
-        <label className="block text-sm font-medium text-gray-700 mb-2">Keyword Filter</label>
-        <input
-          type="text"
-          placeholder="Enter keywords (comma-separated)"
-          value={searchParams.keywords || ""}
-          onChange={(e) =>
-            setSearchParams({ ...searchParams, keywords: e.target.value })
-          }
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-        />
-      </div>
-    </div>
-
-    {/* Buttons */}
-    <div className="flex justify-end space-x-3 mt-6">
-      <button
-        onClick={() => setShowSearchOptions(false)}
-        className="px-4 py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
-      >
-        Close
-      </button>
-      <button
-        onClick={fetchOpportunities}
-        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-      >
-        Apply Filters
-      </button>
-    </div>
-  </div>
-)}
 
           {error && (
             <div className="max-w-7xl mx-auto mb-8">
@@ -758,12 +684,7 @@
                 
                 {/* Search Info */}
                 <div className="text-xs text-gray-500 flex items-center gap-2">
-                  <span>
-                    {searchParams.searchMode === 'active' 
-                      ? '📅 Searching: Active opportunities (last 90 days)'
-                      : `📅 Searching: ${searchParams.postedFrom} to ${searchParams.postedTo}`
-                    }
-                  </span>
+                  <span>📅 Searching: {searchParams.postedFrom} to {searchParams.postedTo}</span>
                   <span>•</span>
                   <span>Limit: {searchParams.limit} results</span>
                   {totalCount >= searchParams.limit && (
