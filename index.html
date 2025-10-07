@@ -44,21 +44,30 @@
     };
 
     function CompanyProfile({ profile, onSave, onClose }) {
-      const [formData, setFormData] = useState(profile);
+      const [formData, setFormData] = useState({
+        ...profile,
+        naicsCodesText: profile.naicsCodes.join(', '),
+        targetAgenciesText: profile.targetAgencies.join(', ')
+      });
 
       const handleSubmit = (e) => {
         e.preventDefault();
-        onSave(formData);
-      };
-
-      const handleNaicsChange = (value) => {
-        const codes = value.split(',').map(c => c.trim()).filter(c => c);
-        setFormData({ ...formData, naicsCodes: codes });
-      };
-
-      const handleAgenciesChange = (value) => {
-        const agencies = value.split(',').map(a => a.trim()).filter(a => a);
-        setFormData({ ...formData, targetAgencies: agencies });
+        
+        // Parse comma-separated strings into arrays
+        const naicsCodes = formData.naicsCodesText.split(',').map(c => c.trim()).filter(c => c);
+        const targetAgencies = formData.targetAgenciesText.split(',').map(a => a.trim()).filter(a => a);
+        
+        const profileToSave = {
+          companyName: formData.companyName,
+          naicsCodes,
+          setAsides: formData.setAsides,
+          targetAgencies,
+          minContractValue: formData.minContractValue,
+          maxContractValue: formData.maxContractValue,
+          minResponseDays: formData.minResponseDays
+        };
+        
+        onSave(profileToSave);
       };
 
       const toggleSetAside = (setAside) => {
@@ -97,8 +106,8 @@
                   </label>
                   <input
                     type="text"
-                    value={formData.naicsCodes.join(', ')}
-                    onChange={(e) => handleNaicsChange(e.target.value)}
+                    value={formData.naicsCodesText}
+                    onChange={(e) => setFormData({ ...formData, naicsCodesText: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="541519, 541511, 541512"
                   />
@@ -132,8 +141,8 @@
                   </label>
                   <input
                     type="text"
-                    value={formData.targetAgencies.join(', ')}
-                    onChange={(e) => handleAgenciesChange(e.target.value)}
+                    value={formData.targetAgenciesText}
+                    onChange={(e) => setFormData({ ...formData, targetAgenciesText: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="DOI, VA, IHS, DOD"
                   />
