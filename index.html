@@ -213,6 +213,7 @@
 
     function FedPIE() {
       const [opportunities, setOpportunities] = useState([]);
+      const [allOpportunities, setAllOpportunities] = useState([]);
       const [filteredOpportunities, setFilteredOpportunities] = useState([]);
       const [totalCount, setTotalCount] = useState(0);
       const [loading, setLoading] = useState(false);
@@ -220,6 +221,7 @@
       const [profile, setProfile] = useState(loadProfile);
       const [showProfile, setShowProfile] = useState(false);
       const [filtersEnabled, setFiltersEnabled] = useState(true);
+      const [servicesFilterEnabled, setServicesFilterEnabled] = useState(true);
       const [expandedScores, setExpandedScores] = useState({});
 
       const handleSaveProfile = (newProfile) => {
@@ -490,15 +492,17 @@
             throw new Error(data.error);
           }
           
-          // Filter to only services contracts
           const allOpps = data.opportunitiesData || [];
-          const servicesOpps = allOpps.filter(isServicesContract);
-          
-          console.log(`Filtered: ${servicesOpps.length} services from ${allOpps.length} total`);
-          
           setTotalCount(allOpps.length);
-          setOpportunities(servicesOpps);
-          setFilteredOpportunities(applyFilters(servicesOpps));
+          setAllOpportunities(allOpps);
+          
+          // Apply services filter if enabled
+          const displayOpps = servicesFilterEnabled 
+            ? allOpps.filter(isServicesContract)
+            : allOpps;
+            
+          setOpportunities(displayOpps);
+          setFilteredOpportunities(applyFilters(displayOpps));
         } catch (err) {
           setError(err.message);
           console.error('Error:', err);
@@ -514,6 +518,16 @@
       useEffect(() => {
         setFilteredOpportunities(applyFilters(opportunities));
       }, [filtersEnabled, profile]);
+
+      useEffect(() => {
+        // Reapply services filter when toggle changes
+        const displayOpps = servicesFilterEnabled 
+          ? allOpportunities.filter(isServicesContract)
+          : allOpportunities;
+          
+        setOpportunities(displayOpps);
+        setFilteredOpportunities(applyFilters(displayOpps));
+      }, [servicesFilterEnabled]);
 
       const formatDate = (dateString) => {
         if (!dateString) return 'N/A';
@@ -563,7 +577,7 @@
                 </button>
               </div>
               
-              <div className="mt-4 flex items-center gap-4">
+              <div className="mt-4 flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-2">
                   <div className={`w-3 h-3 rounded-full ${loading ? 'bg-yellow-500 animate-pulse' : error ? 'bg-red-500' : 'bg-green-500'}`}></div>
                   <span className="text-sm text-gray-600">
@@ -578,6 +592,16 @@
                   Refresh Data
                 </button>
                 <button
+                  onClick={() => setServicesFilterEnabled(!servicesFilterEnabled)}
+                  className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
+                    servicesFilterEnabled 
+                      ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {servicesFilterEnabled ? '✓ Services Only' : 'Show All Types'}
+                </button>
+                <button
                   onClick={() => setFiltersEnabled(!filtersEnabled)}
                   className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
                     filtersEnabled 
@@ -585,7 +609,7 @@
                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
-                  {filtersEnabled ? '✓ Filters Active' : 'Filters Off'}
+                  {filtersEnabled ? '✓ Profile Filters' : 'Profile Filters Off'}
                 </button>
               </div>
             </div>
@@ -615,21 +639,23 @@
                     <>
                       Showing <span className="font-semibold">{filteredOpportunities.length} relevant opportunities</span>
                       {opportunities.length > filteredOpportunities.length && (
-                        <span className="text-gray-500"> (filtered from {opportunities.length} services)</span>
+                        <span className="text-gray-500"> (filtered from {opportunities.length})</span>
                       )}
                     </>
                   ) : (
                     <>
-                      Showing <span className="font-semibold">{opportunities.length} services contracts</span>
-                      {totalCount > opportunities.length && (
-                        <span className="text-gray-500"> (filtered from {totalCount} total)</span>
+                      Showing <span className="font-semibold">{opportunities.length} opportunities</span>
+                      {totalCount > opportunities.length && servicesFilterEnabled && (
+                        <span className="text-gray-500"> ({opportunities.length} services from {totalCount} total)</span>
                       )}
                     </>
                   )}
                 </div>
-                <div className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
-                  🔍 Products & Manufacturing Filtered Out
-                </div>
+                {servicesFilterEnabled && (
+                  <div className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
+                    🔍 Services Only
+                  </div>
+                )}
               </div>
 
               <div className="space-y-4">
