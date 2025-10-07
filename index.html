@@ -223,6 +223,15 @@
       const [filtersEnabled, setFiltersEnabled] = useState(true);
       const [servicesFilterEnabled, setServicesFilterEnabled] = useState(true);
       const [expandedScores, setExpandedScores] = useState({});
+      const [showSearchOptions, setShowSearchOptions] = useState(false);
+      
+      // Search parameters
+      const [searchParams, setSearchParams] = useState({
+        postedFrom: '01/01/2025',
+        postedTo: '12/31/2025',
+        limit: 100,
+        searchMode: 'active' // 'active' or 'dateRange'
+      });
 
       const handleSaveProfile = (newProfile) => {
         setProfile(newProfile);
@@ -585,6 +594,12 @@
                   </span>
                 </div>
                 <button
+                  onClick={() => setShowSearchOptions(!showSearchOptions)}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
+                >
+                  🔍 Search Options
+                </button>
+                <button
                   onClick={fetchOpportunities}
                   disabled={loading}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors text-sm"
@@ -633,29 +648,53 @@
 
           {!loading && !error && (
             <div className="max-w-7xl mx-auto">
-              <div className="mb-4 flex items-center justify-between">
-                <div className="text-sm text-gray-600">
-                  {filtersEnabled ? (
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm text-gray-600">
+                    {filtersEnabled ? (
+                      <>
+                        Showing <span className="font-semibold">{filteredOpportunities.length} relevant opportunities</span>
+                        {opportunities.length > filteredOpportunities.length && (
+                          <span className="text-gray-500"> (filtered from {opportunities.length})</span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        Showing <span className="font-semibold">{opportunities.length} opportunities</span>
+                        {totalCount > opportunities.length && servicesFilterEnabled && (
+                          <span className="text-gray-500"> ({opportunities.length} services from {totalCount} total)</span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    {servicesFilterEnabled && (
+                      <div className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
+                        🔍 Services Only
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Search Info */}
+                <div className="text-xs text-gray-500 flex items-center gap-2">
+                  <span>
+                    {searchParams.searchMode === 'active' 
+                      ? '📅 Searching: Active opportunities (last 90 days)'
+                      : `📅 Searching: ${searchParams.postedFrom} to ${searchParams.postedTo}`
+                    }
+                  </span>
+                  <span>•</span>
+                  <span>Limit: {searchParams.limit} results</span>
+                  {totalCount >= searchParams.limit && (
                     <>
-                      Showing <span className="font-semibold">{filteredOpportunities.length} relevant opportunities</span>
-                      {opportunities.length > filteredOpportunities.length && (
-                        <span className="text-gray-500"> (filtered from {opportunities.length})</span>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      Showing <span className="font-semibold">{opportunities.length} opportunities</span>
-                      {totalCount > opportunities.length && servicesFilterEnabled && (
-                        <span className="text-gray-500"> ({opportunities.length} services from {totalCount} total)</span>
-                      )}
+                      <span>•</span>
+                      <span className="text-orange-600 font-medium">
+                        ⚠️ Showing first {searchParams.limit} - increase limit in Search Options to see more
+                      </span>
                     </>
                   )}
                 </div>
-                {servicesFilterEnabled && (
-                  <div className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
-                    🔍 Services Only
-                  </div>
-                )}
               </div>
 
               <div className="space-y-4">
