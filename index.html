@@ -213,16 +213,89 @@
 
     function FedPIE() {
       const [opportunities, setOpportunities] = useState([]);
+      const [filteredOpportunities, setFilteredOpportunities] = useState([]);
       const [totalCount, setTotalCount] = useState(0);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
       const [profile, setProfile] = useState(loadProfile);
       const [showProfile, setShowProfile] = useState(false);
+      const [filtersEnabled, setFiltersEnabled] = useState(true);
 
       const handleSaveProfile = (newProfile) => {
         setProfile(newProfile);
         saveProfile(newProfile);
         setShowProfile(false);
+      };
+
+      // Calculate relevance score for an opportunity
+      const calculateRelevance = (opp) => {
+        const matches = {
+          naics: false,
+          setAside: false,
+          agency: false,
+          contractValue: false,
+          responseTime: false
+        };
+
+        // NAICS match
+        if (opp.naicsCode && profile.naicsCodes.length > 0) {
+          matches.naics = profile.naicsCodes.includes(opp.naicsCode);
+        }
+
+        // Set-aside match
+        if (opp.typeOfSetAside && profile.setAsides.length > 0) {
+          const oppSetAside = opp.typeOfSetAside.toLowerCase();
+          matches.setAside = profile.setAsides.some(sa => {
+            const normalized = sa.toLowerCase();
+            return oppSetAside.includes(normalized) || 
+                   (normalized === '8(a)' && oppSetAside.includes('8(a)')) ||
+                   (normalized === 'sdb' && oppSetAside.includes('small disadvantaged')) ||
+                   (normalized === 'anc' && oppSetAside.includes('native'));
+          });
+        }
+
+        // Agency match
+        if (opp.fullParentPathName && profile.targetAgencies.length > 0) {
+          const oppAgency = opp.fullParentPathName.toLowerCase();
+          matches.agency = profile.targetAgencies.some(agency => 
+            oppAgency.includes(agency.toLowerCase())
+          );
+        }
+
+        // Contract value in range
+        if (opp.award?.amount) {
+          const amount = opp.award.amount;
+          matches.contractValue = amount >= profile.minContractValue && 
+                                  amount <= profile.maxContractValue;
+        }
+
+        // Response time adequate
+        if (opp.responseDeadLine) {
+          const deadline = new Date(opp.responseDeadLine);
+          const today = new Date();
+          const daysUntilDeadline = Math.ceil((deadline - today) / (1000 * 60 * 60 * 24));
+          matches.responseTime = daysUntilDeadline >= profile.minResponseDays;
+        }
+
+        return matches;
+      };
+
+      // Apply filters based on profile
+      const applyFilters = (opps) => {
+        if (!filtersEnabled) return opps;
+
+        return opps.filter(opp => {
+          const matches = calculateRelevance(opp);
+          
+          // Must pass at least one of: NAICS, set-aside, or agency match
+          const hasRelevanceMatch = matches.naics || matches.setAside || matches.agency;
+          
+          // Must pass contract value and response time filters
+          const passesValueFilter = !opp.award?.amount || matches.contractValue;
+          const passesTimeFilter = !opp.responseDeadLine || matches.responseTime;
+          
+          return hasRelevanceMatch && passesValueFilter && passesTimeFilter;
+        });
       };
 
       const isServicesContract = (opportunity) => {
@@ -285,6 +358,7 @@
           
           setTotalCount(allOpps.length);
           setOpportunities(servicesOpps);
+          setFilteredOpportunities(applyFilters(servicesOpps));
         } catch (err) {
           setError(err.message);
           console.error('Error:', err);
@@ -296,6 +370,10 @@
       useEffect(() => {
         fetchOpportunities();
       }, []);
+
+      useEffect(() => {
+        setFilteredOpportunities(applyFilters(opportunities));
+      }, [filtersEnabled, profile]);
 
       const formatDate = (dateString) => {
         if (!dateString) return 'N/A';
@@ -359,6 +437,16 @@
                 >
                   Refresh Data
                 </button>
+                <button
+                  onClick={() => setFiltersEnabled(!filtersEnabled)}
+                  className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
+                    filtersEnabled 
+                      ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {filtersEnabled ? '✓ Filters Active' : 'Filters Off'}
+                </button>
               </div>
             </div>
           </div>
@@ -383,9 +471,20 @@
             <div className="max-w-7xl mx-auto">
               <div className="mb-4 flex items-center justify-between">
                 <div className="text-sm text-gray-600">
-                  Showing <span className="font-semibold">{opportunities.length} services contracts</span>
-                  {totalCount > opportunities.length && (
-                    <span className="text-gray-500"> (filtered from {totalCount} total)</span>
+                  {filtersEnabled ? (
+                    <>
+                      Showing <span className="font-semibold">{filteredOpportunities.length} relevant opportunities</span>
+                      {opportunities.length > filteredOpportunities.length && (
+                        <span className="text-gray-500"> (filtered from {opportunities.length} services)</span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      Showing <span className="font-semibold">{opportunities.length} services contracts</span>
+                      {totalCount > opportunities.length && (
+                        <span className="text-gray-500"> (filtered from {totalCount} total)</span>
+                      )}
+                    </>
                   )}
                 </div>
                 <div className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
@@ -394,17 +493,58 @@
               </div>
 
               <div className="space-y-4">
-                {opportunities.map((opp, index) => (
-                  <div
-                    key={index}
-                    className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
-                  >
-                    <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                      <span>{opp.title || 'Untitled Opportunity'}</span>
-                      {opp.naicsCode && parseInt(opp.naicsCode) >= 540000 && parseInt(opp.naicsCode) <= 549999 && (
-                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">IT Services</span>
-                      )}
-                    </h3>
+                {(filtersEnabled ? filteredOpportunities : opportunities).map((opp, index) => {
+                  const relevance = calculateRelevance(opp);
+                  const matchCount = Object.values(relevance).filter(Boolean).length;
+                  
+                  return (
+                    <div
+                      key={index}
+                      className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
+                    >
+                      {/* Title with badges */}
+                      <div className="mb-3">
+                        <div className="flex items-start gap-2 mb-2">
+                          <h3 className="text-lg font-semibold text-gray-900 flex-1">
+                            {opp.title || 'Untitled Opportunity'}
+                          </h3>
+                          {matchCount > 0 && (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
+                              <span>⭐</span>
+                              <span>{matchCount} {matchCount === 1 ? 'match' : 'matches'}</span>
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* Relevance badges */}
+                        <div className="flex flex-wrap gap-2">
+                          {relevance.naics && (
+                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                              ✓ NAICS Match
+                            </span>
+                          )}
+                          {relevance.setAside && (
+                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
+                              ✓ Set-Aside Match
+                            </span>
+                          )}
+                          {relevance.agency && (
+                            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
+                              ✓ Target Agency
+                            </span>
+                          )}
+                          {relevance.contractValue && (
+                            <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">
+                              ✓ In Value Range
+                            </span>
+                          )}
+                          {relevance.responseTime && (
+                            <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded">
+                              ✓ Adequate Time
+                            </span>
+                          )}
+                        </div>
+                      </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                       <div>
@@ -448,12 +588,18 @@
                       )}
                     </div>
                   </div>
-                ))}
+                );
+                })}
               </div>
 
-              {opportunities.length === 0 && !loading && !error && (
+              {(filtersEnabled ? filteredOpportunities : opportunities).length === 0 && !loading && !error && (
                 <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-                  <p className="text-gray-600">No opportunities found</p>
+                  <p className="text-gray-600">
+                    {filtersEnabled 
+                      ? 'No opportunities match your profile criteria. Try adjusting your filters or company profile.'
+                      : 'No opportunities found'
+                    }
+                  </p>
                 </div>
               )}
             </div>
