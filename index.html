@@ -220,11 +220,144 @@
       const [profile, setProfile] = useState(loadProfile);
       const [showProfile, setShowProfile] = useState(false);
       const [filtersEnabled, setFiltersEnabled] = useState(true);
+      const [expandedScores, setExpandedScores] = useState({});
 
       const handleSaveProfile = (newProfile) => {
         setProfile(newProfile);
         saveProfile(newProfile);
         setShowProfile(false);
+      };
+
+      const toggleScoreBreakdown = (index) => {
+        setExpandedScores(prev => ({
+          ...prev,
+          [index]: !prev[index]
+        }));
+      };
+
+      const getScoreColor = (score) => {
+        if (score >= 80) return 'text-green-700 bg-green-100 border-green-300';
+        if (score >= 60) return 'text-blue-700 bg-blue-100 border-blue-300';
+        if (score >= 40) return 'text-yellow-700 bg-yellow-100 border-yellow-300';
+        return 'text-gray-700 bg-gray-100 border-gray-300';
+      };
+
+      const getScoreTier = (score) => {
+        if (score >= 80) return { emoji: '🏆', label: 'Tier 1: High Priority', color: 'text-green-700' };
+        if (score >= 60) return { emoji: '⭐', label: 'Tier 2: Good Match', color: 'text-blue-700' };
+        if (score >= 40) return { emoji: '📋', label: 'Tier 3: Consider', color: 'text-yellow-700' };
+        return { emoji: '📄', label: 'Tier 4: Low Priority', color: 'text-gray-700' };
+      };
+
+      // Calculate win probability score (0-100)
+      const calculateWinScore = (opp) => {
+        let score = 0;
+        const breakdown = {};
+
+        // 1. Set-Aside Advantage (30 points max) - BIGGEST factor
+        if (opp.typeOfSetAside) {
+          const setAside = opp.typeOfSetAside.toLowerCase();
+          if (setAside.includes('8(a)')) {
+            score += 30;
+            breakdown.setAside = { points: 30, reason: '8(a) Set-Aside (sole source eligible)' };
+          } else if (setAside.includes('native') || setAside.includes('anc')) {
+            score += 25;
+            breakdown.setAside = { points: 25, reason: 'ANC Set-Aside (special preferences)' };
+          } else if (setAside.includes('small disadvantaged') || setAside.includes('sdb')) {
+            score += 15;
+            breakdown.setAside = { points: 15, reason: 'SDB Set-Aside' };
+          } else if (setAside.includes('small business')) {
+            score += 15;
+            breakdown.setAside = { points: 15, reason: 'Small Business Set-Aside' };
+          } else {
+            breakdown.setAside = { points: 0, reason: 'No applicable set-aside' };
+          }
+        } else {
+          breakdown.setAside = { points: 0, reason: 'Unrestricted competition' };
+        }
+
+        // 2. NAICS Match (20 points)
+        if (opp.naicsCode && profile.naicsCodes.includes(opp.naicsCode)) {
+          score += 20;
+          breakdown.naics = { points: 20, reason: `NAICS ${opp.naicsCode} - Direct match` };
+        } else {
+          breakdown.naics = { points: 0, reason: 'NAICS not in your portfolio' };
+        }
+
+        // 3. Target Agency (20 points)
+        if (opp.fullParentPathName && profile.targetAgencies.length > 0) {
+          const oppAgency = opp.fullParentPathName.toLowerCase();
+          const tier1 = ['doi', 'va', 'ihs', 'veterans affairs', 'interior', 'indian health'];
+          const isTier1 = tier1.some(a => oppAgency.includes(a));
+          const matchedAgency = profile.targetAgencies.find(agency => 
+            oppAgency.includes(agency.toLowerCase())
+          );
+          
+          if (isTier1 && matchedAgency) {
+            score += 20;
+            breakdown.agency = { points: 20, reason: `Tier 1 Target Agency (${matchedAgency})` };
+          } else if (matchedAgency) {
+            score += 10;
+            breakdown.agency = { points: 10, reason: `Target Agency (${matchedAgency})` };
+          } else {
+            breakdown.agency = { points: 0, reason: 'Not a target agency' };
+          }
+        } else {
+          breakdown.agency = { points: 0, reason: 'Agency unknown' };
+        }
+
+        // 4. Contract Value Fit (15 points)
+        if (opp.award?.amount) {
+          const amount = opp.award.amount;
+          if (amount >= profile.minContractValue && amount <= profile.maxContractValue) {
+            score += 15;
+            breakdown.value = { points: 15, reason: 'In optimal value range' };
+          } else if (amount < profile.minContractValue) {
+            score += 5;
+            breakdown.value = { points: 5, reason: 'Below target range (lower profit)' };
+          } else {
+            score += 5;
+            breakdown.value = { points: 5, reason: 'Above target range (higher competition)' };
+          }
+        } else {
+          breakdown.value = { points: 0, reason: 'Value not specified' };
+        }
+
+        // 5. Response Time (10 points)
+        if (opp.responseDeadLine) {
+          const deadline = new Date(opp.responseDeadLine);
+          const today = new Date();
+          const daysUntilDeadline = Math.ceil((deadline - today) / (1000 * 60 * 60 * 24));
+          
+          if (daysUntilDeadline >= 21) {
+            score += 10;
+            breakdown.responseTime = { points: 10, reason: `${daysUntilDeadline} days (comfortable timeline)` };
+          } else if (daysUntilDeadline >= 14) {
+            score += 7;
+            breakdown.responseTime = { points: 7, reason: `${daysUntilDeadline} days (adequate time)` };
+          } else if (daysUntilDeadline >= 7) {
+            score += 4;
+            breakdown.responseTime = { points: 4, reason: `${daysUntilDeadline} days (tight timeline)` };
+          } else if (daysUntilDeadline > 0) {
+            score += 0;
+            breakdown.responseTime = { points: 0, reason: `${daysUntilDeadline} days (too rushed)` };
+          } else {
+            score += 0;
+            breakdown.responseTime = { points: 0, reason: 'Deadline passed' };
+          }
+        } else {
+          breakdown.responseTime = { points: 0, reason: 'No deadline specified' };
+        }
+
+        // 6. Competition Level (5 points)
+        if (opp.typeOfSetAside && opp.typeOfSetAside.toLowerCase() !== 'none') {
+          score += 5;
+          breakdown.competition = { points: 5, reason: 'Limited competition (set-aside)' };
+        } else {
+          breakdown.competition = { points: 0, reason: 'Full and open competition' };
+        }
+
+        return { score, breakdown };
       };
 
       // Calculate relevance score for an opportunity
@@ -284,7 +417,7 @@
       const applyFilters = (opps) => {
         if (!filtersEnabled) return opps;
 
-        return opps.filter(opp => {
+        const filtered = opps.filter(opp => {
           const matches = calculateRelevance(opp);
           
           // Must pass at least one of: NAICS, set-aside, or agency match
@@ -295,6 +428,13 @@
           const passesTimeFilter = !opp.responseDeadLine || matches.responseTime;
           
           return hasRelevanceMatch && passesValueFilter && passesTimeFilter;
+        });
+
+        // Sort by win probability score (highest first)
+        return filtered.sort((a, b) => {
+          const scoreA = calculateWinScore(a).score;
+          const scoreB = calculateWinScore(b).score;
+          return scoreB - scoreA;
         });
       };
 
@@ -496,25 +636,68 @@
                 {(filtersEnabled ? filteredOpportunities : opportunities).map((opp, index) => {
                   const relevance = calculateRelevance(opp);
                   const matchCount = Object.values(relevance).filter(Boolean).length;
+                  const { score, breakdown } = calculateWinScore(opp);
+                  const tier = getScoreTier(score);
+                  const scoreColor = getScoreColor(score);
                   
                   return (
                     <div
                       key={index}
                       className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
                     >
-                      {/* Title with badges */}
+                      {/* Title with score and tier */}
                       <div className="mb-3">
-                        <div className="flex items-start gap-2 mb-2">
+                        <div className="flex items-start gap-3 mb-2">
                           <h3 className="text-lg font-semibold text-gray-900 flex-1">
                             {opp.title || 'Untitled Opportunity'}
                           </h3>
-                          {matchCount > 0 && (
-                            <div className="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
-                              <span>⭐</span>
-                              <span>{matchCount} {matchCount === 1 ? 'match' : 'matches'}</span>
+                          
+                          <div className="flex items-center gap-2">
+                            {/* Win Probability Score */}
+                            <div className={`px-3 py-1.5 border-2 rounded-lg font-bold text-sm ${scoreColor}`}>
+                              {score}% Win
                             </div>
-                          )}
+                            
+                            {/* Tier Badge */}
+                            <div className={`text-2xl ${tier.color}`} title={tier.label}>
+                              {tier.emoji}
+                            </div>
+                          </div>
                         </div>
+                        
+                        {/* Tier Label */}
+                        <div className="mb-2">
+                          <span className={`text-sm font-medium ${tier.color}`}>
+                            {tier.label}
+                          </span>
+                        </div>
+
+                        {/* Score Breakdown Toggle */}
+                        <button
+                          onClick={() => toggleScoreBreakdown(index)}
+                          className="text-sm text-blue-600 hover:text-blue-800 underline mb-2"
+                        >
+                          {expandedScores[index] ? '▼ Hide' : '▶ Show'} Score Breakdown
+                        </button>
+
+                        {/* Score Breakdown */}
+                        {expandedScores[index] && (
+                          <div className="bg-gray-50 rounded-lg p-4 mb-3 space-y-2">
+                            <div className="font-semibold text-sm text-gray-700 mb-2">Why this scored {score}%:</div>
+                            {Object.entries(breakdown).map(([key, data]) => (
+                              <div key={key} className="flex items-center justify-between text-sm">
+                                <span className="text-gray-700">{data.reason}</span>
+                                <span className={`font-semibold ${data.points > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                                  +{data.points} pts
+                                </span>
+                              </div>
+                            ))}
+                            <div className="pt-2 border-t border-gray-200 flex justify-between font-bold text-sm">
+                              <span>Total Score</span>
+                              <span className="text-blue-600">{score}/100</span>
+                            </div>
+                          </div>
+                        )}
                         
                         {/* Relevance badges */}
                         <div className="flex flex-wrap gap-2">
