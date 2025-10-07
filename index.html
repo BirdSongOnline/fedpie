@@ -233,6 +233,47 @@
         keywords: ''
       });
 
+      // Quick preset handlers
+      const setQuickPreset = (preset) => {
+        const today = new Date();
+        let fromDate, toDate;
+        
+        switch(preset) {
+          case 'last90':
+            fromDate = new Date(today);
+            fromDate.setDate(today.getDate() - 90);
+            toDate = today;
+            break;
+          case 'last30':
+            fromDate = new Date(today);
+            fromDate.setDate(today.getDate() - 30);
+            toDate = today;
+            break;
+          case '2025':
+            fromDate = new Date('2025-01-01');
+            toDate = new Date('2025-12-31');
+            break;
+        }
+        
+        const formatDate = (date) => {
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
+        };
+        
+        setSearchParams({
+          ...searchParams,
+          postedFrom: formatDate(fromDate),
+          postedTo: formatDate(toDate)
+        });
+      };
+
+      const handleSearch = () => {
+        setShowSearchOptions(false);
+        fetchOpportunities();
+      };
+
       const handleSaveProfile = (newProfile) => {
         setProfile(newProfile);
         saveProfile(newProfile);
@@ -571,6 +612,108 @@
               onSave={handleSaveProfile}
               onClose={() => setShowProfile(false)}
             />
+          )}
+
+          {/* Search Options Panel */}
+          {showSearchOptions && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full">
+                <div className="p-6">
+                  <h2 className="text-2xl font-bold text-gray-900 mb-6">Search Options</h2>
+                  
+                  {/* Quick Presets */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-3">
+                      Quick Presets
+                    </label>
+                    <div className="flex gap-3 flex-wrap">
+                      <button
+                        onClick={() => setQuickPreset('last90')}
+                        className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors font-medium"
+                      >
+                        Last 90 Days
+                      </button>
+                      <button
+                        onClick={() => setQuickPreset('last30')}
+                        className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors font-medium"
+                      >
+                        Last 30 Days
+                      </button>
+                      <button
+                        onClick={() => setQuickPreset('2025')}
+                        className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors font-medium"
+                      >
+                        All of 2025
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Custom Date Range */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-3">
+                      Custom Date Range
+                    </label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">From Date</label>
+                        <input
+                          type="date"
+                          value={searchParams.postedFrom}
+                          onChange={(e) => setSearchParams({ ...searchParams, postedFrom: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">To Date</label>
+                        <input
+                          type="date"
+                          value={searchParams.postedTo}
+                          onChange={(e) => setSearchParams({ ...searchParams, postedTo: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Result Limit */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-3">
+                      Maximum Results
+                    </label>
+                    <select
+                      value={searchParams.limit}
+                      onChange={(e) => setSearchParams({ ...searchParams, limit: parseInt(e.target.value) })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="50">50 results</option>
+                      <option value="100">100 results</option>
+                      <option value="250">250 results</option>
+                      <option value="500">500 results</option>
+                      <option value="1000">1000 results (max)</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      More results = longer load time. SAM.gov API limit is 1000.
+                    </p>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-3 pt-4 border-t border-gray-200">
+                    <button
+                      onClick={handleSearch}
+                      className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                    >
+                      🔍 Search SAM.gov
+                    </button>
+                    <button
+                      onClick={() => setShowSearchOptions(false)}
+                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
 
           <div className="max-w-7xl mx-auto mb-8">
