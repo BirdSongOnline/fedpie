@@ -16,10 +16,39 @@
     const { useState, useEffect } = React;
 
     const BACKEND_URL = 'https://calm-narwhal-c32e6c.netlify.app/.netlify/functions/sam-proxy';
+
     function FedPIE() {
       const [opportunities, setOpportunities] = useState([]);
+      const [totalCount, setTotalCount] = useState(0);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
+
+      const isServicesContract = (opportunity) => {
+        const naicsCode = opportunity.naicsCode;
+        if (!naicsCode) return true; // Include if no NAICS code
+        
+        const naicsNum = parseInt(naicsCode);
+        
+        // Services NAICS codes (exclude manufacturing 31-33xxxx)
+        if (naicsNum >= 310000 && naicsNum <= 339999) {
+          return false; // Manufacturing - exclude
+        }
+        
+        // Common services sectors
+        if (
+          (naicsNum >= 510000 && naicsNum <= 519999) || // Information
+          (naicsNum >= 540000 && naicsNum <= 549999) || // Professional/Scientific/Technical
+          (naicsNum >= 560000 && naicsNum <= 569999) || // Administrative Support
+          (naicsNum >= 610000 && naicsNum <= 619999) || // Educational Services
+          (naicsNum >= 620000 && naicsNum <= 629999) || // Health Care
+          (naicsNum >= 710000 && naicsNum <= 719999) || // Arts/Entertainment
+          (naicsNum >= 810000 && naicsNum <= 819999)    // Other Services
+        ) {
+          return true;
+        }
+        
+        return true; // Default to including if unclear
+      };
 
       const fetchOpportunities = async () => {
         setLoading(true);
@@ -30,7 +59,7 @@
             postedFrom: '10/01/2025',
             postedTo: '10/06/2025',
             ptype: 'o',
-            limit: '25'
+            limit: '50' // Fetch more since we'll filter
           });
 
           const response = await fetch(`${BACKEND_URL}?${params}`);
@@ -46,7 +75,14 @@
             throw new Error(data.error);
           }
           
-          setOpportunities(data.opportunitiesData || []);
+          // Filter to only services contracts
+          const allOpps = data.opportunitiesData || [];
+          const servicesOpps = allOpps.filter(isServicesContract);
+          
+          console.log(`Filtered: ${servicesOpps.length} services from ${allOpps.length} total`);
+          
+          setTotalCount(allOpps.length);
+          setOpportunities(servicesOpps);
         } catch (err) {
           setError(err.message);
           console.error('Error:', err);
@@ -125,8 +161,16 @@
 
           {!loading && !error && (
             <div className="max-w-7xl mx-auto">
-              <div className="mb-4 text-sm text-gray-600">
-                Showing {opportunities.length} opportunities
+              <div className="mb-4 flex items-center justify-between">
+                <div className="text-sm text-gray-600">
+                  Showing <span className="font-semibold">{opportunities.length} services contracts</span>
+                  {totalCount > opportunities.length && (
+                    <span className="text-gray-500"> (filtered from {totalCount} total)</span>
+                  )}
+                </div>
+                <div className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full">
+                  🔍 Products & Manufacturing Filtered Out
+                </div>
               </div>
 
               <div className="space-y-4">
@@ -135,8 +179,11 @@
                     key={index}
                     className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
                   >
-                    <h3 className="text-lg font-semibold text-gray-900 mb-3">
-                      {opp.title || 'Untitled Opportunity'}
+                    <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                      <span>{opp.title || 'Untitled Opportunity'}</span>
+                      {opp.naicsCode && parseInt(opp.naicsCode) >= 540000 && parseInt(opp.naicsCode) <= 549999 && (
+                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">IT Services</span>
+                      )}
                     </h3>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
