@@ -225,6 +225,11 @@
       const [expandedScores, setExpandedScores] = useState({});
       const [showSearchOptions, setShowSearchOptions] = useState(false);
       
+      // AI Analysis state
+      const [analyzingOpp, setAnalyzingOpp] = useState(null);
+      const [analyses, setAnalyses] = useState({});
+      const [showAnalysis, setShowAnalysis] = useState({});
+      
       // Search parameters - using date format that works with HTML date inputs
       const [searchParams, setSearchParams] = useState({
         postedFrom: '2025-01-01',
@@ -307,6 +312,13 @@
         }));
       };
 
+      const toggleAnalysisPanel = (noticeId) => {
+        setShowAnalysis(prev => ({
+          ...prev,
+          [noticeId]: !prev[noticeId]
+        }));
+      };
+
       const getScoreColor = (score) => {
         if (score >= 80) return 'text-green-700 bg-green-100 border-green-300';
         if (score >= 60) return 'text-blue-700 bg-blue-100 border-blue-300';
@@ -319,6 +331,116 @@
         if (score >= 60) return { emoji: '⭐', label: 'Tier 2: Good Match', color: 'text-blue-700' };
         if (score >= 40) return { emoji: '📋', label: 'Tier 3: Consider', color: 'text-yellow-700' };
         return { emoji: '📄', label: 'Tier 4: Low Priority', color: 'text-gray-700' };
+      };
+
+      // AI Analysis function
+      const analyzeWithClaude = async (opp, index) => {
+        // Check if we already have analysis cached
+        if (analyses[opp.noticeId]) {
+          toggleAnalysisPanel(opp.noticeId);
+          return;
+        }
+
+        setAnalyzingOpp(opp.noticeId);
+        
+        try {
+          const { score, breakdown } = calculateWinScore(opp);
+          const tier = getScoreTier(score);
+          
+          // Build detailed context for Claude
+          const prompt = `You are analyzing a federal government contract opportunity for ${profile.companyName}.
+
+COMPANY PROFILE:
+- Company: ${profile.companyName}
+- Set-Aside Qualifications: ${profile.setAsides.join(', ') || 'None specified'}
+- NAICS codes: ${profile.naicsCodes.join(', ') || 'None specified'}
+- Target agencies: ${profile.targetAgencies.join(', ') || 'None specified'}
+- Target contract value: $${(profile.minContractValue/1000000).toFixed(1)}M - $${(profile.maxContractValue/1000000).toFixed(1)}M
+
+OPPORTUNITY DETAILS:
+Title: ${opp.title}
+Notice ID: ${opp.noticeId}
+Type: ${opp.type || 'Not specified'}
+Agency: ${opp.department || opp.fullParentPathName || 'Not specified'}
+Set-Aside: ${opp.typeOfSetAside || 'Not specified'}
+NAICS: ${opp.naicsCode || 'Not specified'}
+Posted: ${new Date(opp.postedDate).toLocaleDateString()}
+Deadline: ${new Date(opp.responseDeadLine).toLocaleDateString()}
+Award Amount: ${opp.award?.amount ? '$' + opp.award.amount.toLocaleString() : 'Not specified'}
+Description: ${opp.description || 'No description available'}
+
+WIN PROBABILITY SCORE: ${score}/100 (${tier.label})
+
+Please analyze this opportunity and provide a structured assessment. Return your response as valid JSON with these exact keys:
+
+{
+  "executiveSummary": "2-3 sentence overview of what this opportunity is and why it matters for this company",
+  "keyRequirements": ["requirement 1", "requirement 2", "requirement 3"],
+  "evaluationCriteria": "What will proposals be scored on and what matters most",
+  "advantages": "Why this company is well-positioned, including specific qualifications",
+  "redFlags": "Any concerns, deal-breakers, or competitive challenges (or 'None identified' if looks good)",
+  "levelOfEffort": "Small/Medium/Large proposal expected, with estimated hours"
+}
+
+IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting, code blocks, or text outside the JSON object.`;
+
+          const response = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 2000,
+              messages: [
+                { role: "user", content: prompt }
+              ]
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`Claude API error: ${response.status}`);
+          }
+
+          const data = await response.json();
+          const claudeResponse = data.content[0].text;
+          
+          // Try to parse as JSON
+          let analysis;
+          try {
+            // Remove markdown code blocks if present
+            const jsonText = claudeResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            analysis = JSON.parse(jsonText);
+          } catch (e) {
+            // If JSON parsing fails, create a fallback structure
+            analysis = {
+              executiveSummary: "Analysis completed but response format was unexpected. See raw response below.",
+              keyRequirements: ["Unable to parse structured requirements"],
+              evaluationCriteria: "See raw response",
+              advantages: "See raw response",
+              redFlags: "See raw response",
+              levelOfEffort: "Unable to determine",
+              rawResponse: claudeResponse
+            };
+          }
+
+          // Cache the analysis
+          setAnalyses(prev => ({
+            ...prev,
+            [opp.noticeId]: analysis
+          }));
+          
+          // Show the analysis panel
+          setShowAnalysis(prev => ({
+            ...prev,
+            [opp.noticeId]: true
+          }));
+        } catch (err) {
+          console.error('Analysis error:', err);
+          alert(`Failed to analyze: ${err.message}`);
+        } finally {
+          setAnalyzingOpp(null);
+        }
       };
 
       // Calculate win probability score (0-100)
@@ -785,7 +907,7 @@
                     FedPIE - Federal Procurement Intelligence Engine
                   </h1>
                   <p className="text-gray-600">
-                    {profile.companyName} - Live SAM.gov Opportunities
+                    {profile.companyName} - Live SAM.gov Opportunities with AI Analysis
                   </p>
                 </div>
                 <button
@@ -909,6 +1031,9 @@
                   const { score, breakdown } = calculateWinScore(opp);
                   const tier = getScoreTier(score);
                   const scoreColor = getScoreColor(score);
+                  const isAnalyzing = analyzingOpp === opp.noticeId;
+                  const hasAnalysis = analyses[opp.noticeId];
+                  const showingAnalysis = showAnalysis[opp.noticeId];
                   
                   return (
                     <div
@@ -942,13 +1067,31 @@
                           </span>
                         </div>
 
-                        {/* Score Breakdown Toggle */}
-                        <button
-                          onClick={() => toggleScoreBreakdown(index)}
-                          className="text-sm text-blue-600 hover:text-blue-800 underline mb-2"
-                        >
-                          {expandedScores[index] ? '▼ Hide' : '▶ Show'} Score Breakdown
-                        </button>
+                        {/* Action Buttons Row */}
+                        <div className="flex gap-2 mb-2">
+                          <button
+                            onClick={() => toggleScoreBreakdown(index)}
+                            className="text-sm text-blue-600 hover:text-blue-800 underline"
+                          >
+                            {expandedScores[index] ? '▼ Hide' : '▶ Show'} Score Breakdown
+                          </button>
+                          
+                          <span className="text-gray-300">|</span>
+                          
+                          <button
+                            onClick={() => analyzeWithClaude(opp, index)}
+                            disabled={isAnalyzing}
+                            className={`text-sm font-medium underline ${
+                              isAnalyzing 
+                                ? 'text-gray-400 cursor-wait' 
+                                : hasAnalysis 
+                                  ? 'text-purple-600 hover:text-purple-800' 
+                                  : 'text-purple-600 hover:text-purple-800'
+                            }`}
+                          >
+                            {isAnalyzing ? '✨ Analyzing...' : hasAnalysis ? '✨ View AI Analysis' : '✨ Analyze with AI'}
+                          </button>
+                        </div>
 
                         {/* Score Breakdown */}
                         {expandedScores[index] && (
@@ -965,6 +1108,74 @@
                             <div className="pt-2 border-t border-gray-200 flex justify-between font-bold text-sm">
                               <span>Total Score</span>
                               <span className="text-blue-600">{score}/100</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* AI Analysis Panel */}
+                        {showingAnalysis && hasAnalysis && (
+                          <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-lg p-5 mb-3 border border-purple-200">
+                            <div className="flex items-center justify-between mb-4">
+                              <h4 className="text-lg font-bold text-purple-900 flex items-center gap-2">
+                                ✨ AI Analysis
+                              </h4>
+                              <button
+                                onClick={() => toggleAnalysisPanel(opp.noticeId)}
+                                className="text-gray-500 hover:text-gray-700 text-xl"
+                              >
+                                ✕
+                              </button>
+                            </div>
+
+                            <div className="space-y-4">
+                              <div>
+                                <h5 className="font-semibold text-purple-900 mb-2">Executive Summary</h5>
+                                <p className="text-gray-700 text-sm leading-relaxed">{analyses[opp.noticeId].executiveSummary}</p>
+                              </div>
+
+                              <div>
+                                <h5 className="font-semibold text-purple-900 mb-2">Key Requirements</h5>
+                                <ul className="list-disc list-inside space-y-1 text-gray-700 text-sm">
+                                  {Array.isArray(analyses[opp.noticeId].keyRequirements) ? (
+                                    analyses[opp.noticeId].keyRequirements.map((req, idx) => (
+                                      <li key={idx}>{req}</li>
+                                    ))
+                                  ) : (
+                                    <li>{analyses[opp.noticeId].keyRequirements}</li>
+                                  )}
+                                </ul>
+                              </div>
+
+                              <div>
+                                <h5 className="font-semibold text-purple-900 mb-2">Evaluation Criteria</h5>
+                                <p className="text-gray-700 text-sm leading-relaxed">{analyses[opp.noticeId].evaluationCriteria}</p>
+                              </div>
+
+                              <div>
+                                <h5 className="font-semibold text-purple-900 mb-2">Your Advantages</h5>
+                                <p className="text-gray-700 text-sm leading-relaxed">{analyses[opp.noticeId].advantages}</p>
+                              </div>
+
+                              <div>
+                                <h5 className="font-semibold text-purple-900 mb-2">Red Flags / Risks</h5>
+                                <p className="text-gray-700 text-sm leading-relaxed">{analyses[opp.noticeId].redFlags}</p>
+                              </div>
+
+                              <div>
+                                <h5 className="font-semibold text-purple-900 mb-2">Level of Effort</h5>
+                                <p className="text-gray-700 text-sm leading-relaxed">{analyses[opp.noticeId].levelOfEffort}</p>
+                              </div>
+
+                              {analyses[opp.noticeId].rawResponse && (
+                                <details className="mt-4">
+                                  <summary className="cursor-pointer text-xs text-gray-600 hover:text-gray-800">
+                                    View raw response (debug)
+                                  </summary>
+                                  <pre className="mt-2 p-3 bg-white rounded text-xs overflow-x-auto border border-gray-200">
+                                    {analyses[opp.noticeId].rawResponse}
+                                  </pre>
+                                </details>
+                              )}
                             </div>
                           </div>
                         )}
