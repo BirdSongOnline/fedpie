@@ -16,6 +16,7 @@
     const { useState, useEffect } = React;
 
     const BACKEND_URL = 'https://calm-narwhal-c32e6c.netlify.app/.netlify/functions/sam-proxy';
+    const OPENAI_PROXY_URL = 'https://calm-narwhal-c32e6c.netlify.app/.netlify/functions/openai-proxy';
 
     // Default company profile
     const DEFAULT_PROFILE = {
@@ -333,8 +334,8 @@
         return { emoji: '📄', label: 'Tier 4: Low Priority', color: 'text-gray-700' };
       };
 
-      // AI Analysis function
-      const analyzeWithClaude = async (opp, index) => {
+      // AI Analysis function using OpenAI
+      const analyzeWithAI = async (opp, index) => {
         // Check if we already have analysis cached
         if (analyses[opp.noticeId]) {
           toggleAnalysisPanel(opp.noticeId);
@@ -347,7 +348,7 @@
           const { score, breakdown } = calculateWinScore(opp);
           const tier = getScoreTier(score);
           
-          // Build detailed context for Claude
+          // Build detailed context for AI
           const prompt = `You are analyzing a federal government contract opportunity for ${profile.companyName}.
 
 COMPANY PROFILE:
@@ -384,32 +385,27 @@ Please analyze this opportunity and provide a structured assessment. Return your
 
 IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting, code blocks, or text outside the JSON object.`;
 
-          const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
+          const response = await fetch(OPENAI_PROXY_URL, {
+            method: 'POST',
             headers: {
-              "Content-Type": "application/json",
+              'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-              model: "claude-sonnet-4-20250514",
-              max_tokens: 2000,
-              messages: [
-                { role: "user", content: prompt }
-              ]
-            })
+            body: JSON.stringify({ prompt })
           });
 
           if (!response.ok) {
-            throw new Error(`Claude API error: ${response.status}`);
+            const errorData = await response.json();
+            throw new Error(errorData.error || `API error: ${response.status}`);
           }
 
           const data = await response.json();
-          const claudeResponse = data.content[0].text;
+          const aiResponse = data.choices[0].message.content;
           
           // Try to parse as JSON
           let analysis;
           try {
             // Remove markdown code blocks if present
-            const jsonText = claudeResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            const jsonText = aiResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
             analysis = JSON.parse(jsonText);
           } catch (e) {
             // If JSON parsing fails, create a fallback structure
@@ -420,7 +416,7 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
               advantages: "See raw response",
               redFlags: "See raw response",
               levelOfEffort: "Unable to determine",
-              rawResponse: claudeResponse
+              rawResponse: aiResponse
             };
           }
 
@@ -1079,7 +1075,7 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                           <span className="text-gray-300">|</span>
                           
                           <button
-                            onClick={() => analyzeWithClaude(opp, index)}
+                            onClick={() => analyzeWithAI(opp, index)}
                             disabled={isAnalyzing}
                             className={`text-sm font-medium underline ${
                               isAnalyzing 
