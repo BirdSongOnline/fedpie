@@ -455,11 +455,33 @@
         
         const deptUpper = departmentName.toUpperCase();
         
+        // Try exact match first
         for (const [key, code] of Object.entries(AGENCY_CODES)) {
           if (deptUpper.includes(key.toUpperCase())) {
             return code;
           }
         }
+        
+        // Try partial matches for common patterns
+        if (deptUpper.includes('DEFENSE') || deptUpper.includes('DOD')) return '9700';
+        if (deptUpper.includes('INTERIOR') || deptUpper.includes('DOI')) return '1400';
+        if (deptUpper.includes('VETERANS') || deptUpper.includes('VA')) return '3600';
+        if (deptUpper.includes('HEALTH') && deptUpper.includes('HUMAN')) return '7500';
+        if (deptUpper.includes('HOMELAND') || deptUpper.includes('DHS')) return '7000';
+        if (deptUpper.includes('AGRICULTURE') || deptUpper.includes('USDA')) return '1200';
+        if (deptUpper.includes('ENERGY') || deptUpper.includes('DOE')) return '8900';
+        if (deptUpper.includes('NASA')) return '8000';
+        if (deptUpper.includes('JUSTICE') || deptUpper.includes('DOJ')) return '1500';
+        if (deptUpper.includes('STATE DEPT')) return '1900';
+        if (deptUpper.includes('TRANSPORTATION') || deptUpper.includes('DOT')) return '6900';
+        if (deptUpper.includes('TREASURY')) return '2000';
+        if (deptUpper.includes('COMMERCE')) return '1300';
+        if (deptUpper.includes('LABOR') || deptUpper.includes('DOL')) return '1600';
+        if (deptUpper.includes('GSA') || deptUpper.includes('GENERAL SERVICES')) return '4700';
+        if (deptUpper.includes('EPA') || deptUpper.includes('ENVIRONMENTAL')) return '6800';
+        if (deptUpper.includes('SBA') || deptUpper.includes('SMALL BUSINESS')) return '7300';
+        if (deptUpper.includes('OPM') || deptUpper.includes('PERSONNEL MANAGEMENT')) return '2400';
+        if (deptUpper.includes('NSF') || deptUpper.includes('SCIENCE FOUNDATION')) return '4900';
         
         return null;
       };
@@ -478,32 +500,45 @@
           const naicsCode = opp.naicsCode;
           const agencyCode = getAgencyCode(opp.department || opp.fullParentPathName);
           
-          if (!naicsCode || !agencyCode) {
+          console.log('Fetching FPDS for:', {
+            noticeId,
+            naicsCode,
+            agencyCode,
+            department: opp.department,
+            fullPath: opp.fullParentPathName
+          });
+          
+          if (!naicsCode) {
             setFpdsData(prev => ({
               ...prev,
-              [noticeId]: { error: 'Missing NAICS or agency code', count: 0 }
+              [noticeId]: { error: 'No NAICS code found for this opportunity', count: 0 }
             }));
             return;
           }
           
-          // Query last 2 years of contracts
-          const endDate = new Date().toISOString().split('T')[0];
-          const startDate = new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          if (!agencyCode) {
+            setFpdsData(prev => ({
+              ...prev,
+              [noticeId]: { error: `Could not map agency: ${opp.department || opp.fullParentPathName}`, count: 0 }
+            }));
+            return;
+          }
           
           const params = new URLSearchParams({
-            naics: naicsCode,
-            agency: agencyCode,
-            startDate: startDate,
-            endDate: endDate
+            naics: naicsCode
           });
           
-          const response = await fetch(`${FPDS_PROXY_URL}?${params}`);
+          const fpdsProxyUrl = `${FPDS_PROXY_URL}?${params}`;
+          console.log('Calling FPDS proxy:', fpdsProxyUrl);
+          
+          const response = await fetch(fpdsProxyUrl);
           
           if (!response.ok) {
-            throw new Error(`FPDS API error: ${response.status}`);
+            throw new Error(`FPDS proxy returned status ${response.status}`);
           }
           
           const data = await response.json();
+          console.log('FPDS response:', data);
           
           if (data.success && data.data) {
             const intelligence = analyzeContracts(data.data);
@@ -514,7 +549,7 @@
           } else {
             setFpdsData(prev => ({
               ...prev,
-              [noticeId]: { error: data.error || 'No data', count: 0 }
+              [noticeId]: { error: data.error || 'No data returned', count: 0 }
             }));
           }
         } catch (err) {
