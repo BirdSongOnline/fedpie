@@ -18,12 +18,43 @@ exports.handler = async (event, context) => {
   try {
     const params = event.queryStringParameters || {};
     
-    // Try a super simple query first - just get recent contracts
-    let query = `LAST_MOD_DATE:[2024/10/01,2025/10/12]`;
+    // Build query based on what we're looking for
+    let query = '';
     
-    // Add NAICS if provided
     if (params.naics) {
+      // Query for contracts with this NAICS code
       query = `PRINCIPAL_NAICS_CODE:"${params.naics}"`;
+      
+      // Add date filter - look back 2 years OR forward 1 year for expiring contracts
+      const today = new Date();
+      const twoYearsAgo = new Date(today);
+      twoYearsAgo.setFullYear(today.getFullYear() - 2);
+      const oneYearAhead = new Date(today);
+      oneYearAhead.setFullYear(today.getFullYear() + 1);
+      
+      const formatDate = (date) => {
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const year = date.getFullYear();
+        return `${month}/${day}/${year}`;
+      };
+      
+      // Use LAST_MOD_DATE to get recent contracts
+      query += ` LAST_MOD_DATE:[${formatDate(twoYearsAgo)},${formatDate(today)}]`;
+    } else {
+      // Fallback: get recent contracts from last month
+      const today = new Date();
+      const lastMonth = new Date(today);
+      lastMonth.setMonth(today.getMonth() - 1);
+      
+      const formatDate = (date) => {
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const year = date.getFullYear();
+        return `${month}/${day}/${year}`;
+      };
+      
+      query = `LAST_MOD_DATE:[${formatDate(lastMonth)},${formatDate(today)}]`;
     }
     
     // Build FPDS query URL
@@ -66,10 +97,11 @@ exports.handler = async (event, context) => {
     const xmlText = await response.text();
     
     console.log('FPDS response received, length:', xmlText.length);
-    console.log('First 500 chars:', xmlText.substring(0, 500));
     
     // Parse the Atom feed XML
     const parsedData = parseAtomFeed(xmlText);
+    
+    console.log('Parsed contracts:', parsedData.length);
 
     return {
       statusCode: 200,

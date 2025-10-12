@@ -27,61 +27,31 @@
     const OPENAI_PROXY_URL = 'https://calm-narwhal-c32e6c.netlify.app/.netlify/functions/openai-proxy';
 
     // Agency code mapping for FPDS
-   const AGENCY_CODES = {
-  'DEPT OF THE INTERIOR': '1400',
-  'DEPARTMENT OF THE INTERIOR': '1400',
-  'INTERIOR': '1400',
-  'DOI': '1400',
-  'VETERANS AFFAIRS, DEPARTMENT OF': '3600',
-  'DEPARTMENT OF VETERANS AFFAIRS': '3600',
-  'VETERANS AFFAIRS': '3600',
-  'VA': '3600',
-  'HEALTH AND HUMAN SERVICES, DEPARTMENT OF': '7500',
-  'DEPARTMENT OF HEALTH AND HUMAN SERVICES': '7500',
-  'HHS': '7500',
-  'AGRICULTURE, DEPARTMENT OF': '1200',
-  'DEPARTMENT OF AGRICULTURE': '1200',
-  'USDA': '1200',
-  'HOMELAND SECURITY, DEPARTMENT OF': '7000',
-  'DEPARTMENT OF HOMELAND SECURITY': '7000',
-  'DHS': '7000',
-  'GENERAL SERVICES ADMINISTRATION': '4700',
-  'GSA': '4700',
-  'OFFICE OF PERSONNEL MANAGEMENT': '2400',
-  'OPM': '2400',
-  'SMALL BUSINESS ADMINISTRATION': '7300',
-  'SBA': '7300',
-  'ENVIRONMENTAL PROTECTION AGENCY': '6800',
-  'EPA': '6800',
-  'NATIONAL SCIENCE FOUNDATION': '4900',
-  'NSF': '4900',
-  // Add Department of Defense
-  'DEPARTMENT OF DEFENSE': '9700',
-  'DEPT OF DEFENSE': '9700',
-  'DOD': '9700',
-  'DEFENSE': '9700',
-  // Add more common agencies
-  'DEPARTMENT OF ENERGY': '8900',
-  'ENERGY': '8900',
-  'DOE': '8900',
-  'NATIONAL AERONAUTICS AND SPACE ADMINISTRATION': '8000',
-  'NASA': '8000',
-  'DEPARTMENT OF JUSTICE': '1500',
-  'JUSTICE': '1500',
-  'DOJ': '1500',
-  'DEPARTMENT OF STATE': '1900',
-  'STATE': '1900',
-  'DEPARTMENT OF TRANSPORTATION': '6900',
-  'TRANSPORTATION': '6900',
-  'DOT': '6900',
-  'DEPARTMENT OF TREASURY': '2000',
-  'TREASURY': '2000',
-  'DEPARTMENT OF COMMERCE': '1300',
-  'COMMERCE': '1300',
-  'DEPARTMENT OF LABOR': '1600',
-  'LABOR': '1600',
-  'DOL': '1600'
-};
+    const AGENCY_CODES = {
+      'DEPT OF THE INTERIOR': '1400',
+      'DEPARTMENT OF THE INTERIOR': '1400',
+      'INTERIOR': '1400',
+      'VETERANS AFFAIRS, DEPARTMENT OF': '3600',
+      'DEPARTMENT OF VETERANS AFFAIRS': '3600',
+      'VETERANS AFFAIRS': '3600',
+      'VA': '3600',
+      'HEALTH AND HUMAN SERVICES, DEPARTMENT OF': '7500',
+      'HHS': '7500',
+      'AGRICULTURE, DEPARTMENT OF': '1200',
+      'USDA': '1200',
+      'HOMELAND SECURITY, DEPARTMENT OF': '7000',
+      'DHS': '7000',
+      'GENERAL SERVICES ADMINISTRATION': '4700',
+      'GSA': '4700',
+      'OFFICE OF PERSONNEL MANAGEMENT': '2400',
+      'OPM': '2400',
+      'SMALL BUSINESS ADMINISTRATION': '7300',
+      'SBA': '7300',
+      'ENVIRONMENTAL PROTECTION AGENCY': '6800',
+      'EPA': '6800',
+      'NATIONAL SCIENCE FOUNDATION': '4900',
+      'NSF': '4900'
+    };
 
     // Auth Components
     function AuthForm({ onSuccess }) {
@@ -572,6 +542,12 @@
           ? values.reduce((a, b) => a + b, 0) / values.length 
           : 0;
         
+        const medianValue = values.length > 0
+          ? values.sort((a, b) => a - b)[Math.floor(values.length / 2)]
+          : 0;
+        
+        const totalValue = values.reduce((a, b) => a + b, 0);
+        
         // Count set-aside contracts
         const setAsideCount = contracts.filter(c => 
           c.setAside && (c.setAside.includes('8(A)') || c.setAside.includes('8A'))
@@ -585,11 +561,13 @@
               vendorMap[c.vendorName] = {
                 name: c.vendorName,
                 count: 0,
-                totalValue: 0
+                totalValue: 0,
+                contracts: []
               };
             }
             vendorMap[c.vendorName].count++;
             vendorMap[c.vendorName].totalValue += c.obligatedAmount || 0;
+            vendorMap[c.vendorName].contracts.push(c);
           }
         });
         
@@ -598,21 +576,52 @@
           .sort((a, b) => b.count - a.count)
           .slice(0, 5);
         
-        // Find expiring contracts
+        // Find expiring contracts - categorize by timeframe
         const now = new Date();
+        const threeMonths = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
         const sixMonths = new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000);
-        const expiringSoon = contracts.filter(c => {
+        const twelveMonths = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+        
+        const expiring3Months = contracts.filter(c => {
           if (!c.completionDate) return false;
           const endDate = new Date(c.completionDate);
-          return endDate > now && endDate < sixMonths;
-        });
+          return endDate > now && endDate <= threeMonths;
+        }).sort((a, b) => new Date(a.completionDate) - new Date(b.completionDate));
+        
+        const expiring6Months = contracts.filter(c => {
+          if (!c.completionDate) return false;
+          const endDate = new Date(c.completionDate);
+          return endDate > threeMonths && endDate <= sixMonths;
+        }).sort((a, b) => new Date(a.completionDate) - new Date(b.completionDate));
+        
+        const expiring12Months = contracts.filter(c => {
+          if (!c.completionDate) return false;
+          const endDate = new Date(c.completionDate);
+          return endDate > sixMonths && endDate <= twelveMonths;
+        }).sort((a, b) => new Date(a.completionDate) - new Date(b.completionDate));
+        
+        // Calculate months until expiration for each contract
+        const addMonthsUntilExpiration = (contractList) => {
+          return contractList.map(c => {
+            const endDate = new Date(c.completionDate);
+            const monthsUntil = Math.round((endDate - now) / (30 * 24 * 60 * 60 * 1000));
+            return { ...c, monthsUntilExpiration: monthsUntil };
+          });
+        };
 
         return {
           count: contracts.length,
           avgValue: avgValue,
+          medianValue: medianValue,
+          totalValue: totalValue,
           setAsidePercent: contracts.length > 0 ? (setAsideCount / contracts.length * 100) : 0,
           topWinners: topWinners,
-          expiringSoon: expiringSoon.slice(0, 3),
+          recompeteAlerts: {
+            expiring3Months: addMonthsUntilExpiration(expiring3Months),
+            expiring6Months: addMonthsUntilExpiration(expiring6Months),
+            expiring12Months: addMonthsUntilExpiration(expiring12Months),
+            totalExpiring: expiring3Months.length + expiring6Months.length + expiring12Months.length
+          },
           contracts: contracts
         };
       };
@@ -1553,6 +1562,108 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                               </div>
                             ) : (
                               <div className="space-y-4">
+                                {/* Re-Compete Alerts - Show first if any exist */}
+                                {fpdsInfo.recompeteAlerts && fpdsInfo.recompeteAlerts.totalExpiring > 0 && (
+                                  <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4">
+                                    <h5 className="font-bold text-orange-900 mb-3 flex items-center gap-2">
+                                      🚨 Re-Compete Alerts ({fpdsInfo.recompeteAlerts.totalExpiring})
+                                    </h5>
+                                    <p className="text-sm text-orange-800 mb-3">
+                                      These contracts are expiring soon - reach out to the agency NOW to position for the re-compete!
+                                    </p>
+                                    
+                                    {fpdsInfo.recompeteAlerts.expiring3Months.length > 0 && (
+                                      <div className="mb-3">
+                                        <div className="font-semibold text-red-900 text-sm mb-2">
+                                          🔴 URGENT - Expiring in 0-3 months:
+                                        </div>
+                                        <div className="space-y-2">
+                                          {fpdsInfo.recompeteAlerts.expiring3Months.map((contract, idx) => (
+                                            <div key={idx} className="bg-white rounded p-3 border border-red-200 text-sm">
+                                              <div className="flex justify-between items-start mb-1">
+                                                <div className="font-medium text-gray-900 flex-1">
+                                                  <span className="text-red-700">📍 {contract.monthsUntilExpiration} months left</span>
+                                                  <div className="text-gray-700 mt-1">{contract.vendorName || 'Unknown Vendor'}</div>
+                                                </div>
+                                                <div className="text-right">
+                                                  <div className="font-bold text-gray-900">{formatCurrency(contract.obligatedAmount)}</div>
+                                                  <div className="text-xs text-gray-500">{contract.piid || 'N/A'}</div>
+                                                </div>
+                                              </div>
+                                              <div className="text-xs text-gray-600 mt-1">
+                                                Expires: {formatDate(contract.completionDate)}
+                                              </div>
+                                              {contract.description && (
+                                                <div className="text-xs text-gray-500 mt-1 line-clamp-1">
+                                                  {contract.description}
+                                                </div>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                    
+                                    {fpdsInfo.recompeteAlerts.expiring6Months.length > 0 && (
+                                      <div className="mb-3">
+                                        <div className="font-semibold text-orange-900 text-sm mb-2">
+                                          🟠 HIGH PRIORITY - Expiring in 3-6 months:
+                                        </div>
+                                        <div className="space-y-2">
+                                          {fpdsInfo.recompeteAlerts.expiring6Months.slice(0, 3).map((contract, idx) => (
+                                            <div key={idx} className="bg-white rounded p-3 border border-orange-200 text-sm">
+                                              <div className="flex justify-between items-start mb-1">
+                                                <div className="font-medium text-gray-900 flex-1">
+                                                  <span className="text-orange-700">📍 {contract.monthsUntilExpiration} months left</span>
+                                                  <div className="text-gray-700 mt-1">{contract.vendorName || 'Unknown Vendor'}</div>
+                                                </div>
+                                                <div className="text-right">
+                                                  <div className="font-bold text-gray-900">{formatCurrency(contract.obligatedAmount)}</div>
+                                                  <div className="text-xs text-gray-500">{contract.piid || 'N/A'}</div>
+                                                </div>
+                                              </div>
+                                              <div className="text-xs text-gray-600 mt-1">
+                                                Expires: {formatDate(contract.completionDate)}
+                                              </div>
+                                            </div>
+                                          ))}
+                                          {fpdsInfo.recompeteAlerts.expiring6Months.length > 3 && (
+                                            <div className="text-xs text-gray-600 text-center py-1">
+                                              + {fpdsInfo.recompeteAlerts.expiring6Months.length - 3} more expiring in this timeframe
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                    
+                                    {fpdsInfo.recompeteAlerts.expiring12Months.length > 0 && (
+                                      <div>
+                                        <div className="font-semibold text-yellow-900 text-sm mb-2">
+                                          🟡 WATCH - Expiring in 6-12 months:
+                                        </div>
+                                        <div className="space-y-2">
+                                          {fpdsInfo.recompeteAlerts.expiring12Months.slice(0, 2).map((contract, idx) => (
+                                            <div key={idx} className="bg-white rounded p-2 border border-yellow-200 text-sm">
+                                              <div className="flex justify-between items-start">
+                                                <div className="flex-1">
+                                                  <span className="text-yellow-700 text-xs">📍 ~{contract.monthsUntilExpiration} months</span>
+                                                  <span className="text-gray-700 ml-2">{contract.vendorName || 'Unknown'}</span>
+                                                </div>
+                                                <div className="font-medium text-gray-900">{formatCurrency(contract.obligatedAmount)}</div>
+                                              </div>
+                                            </div>
+                                          ))}
+                                          {fpdsInfo.recompeteAlerts.expiring12Months.length > 2 && (
+                                            <div className="text-xs text-gray-600 text-center py-1">
+                                              + {fpdsInfo.recompeteAlerts.expiring12Months.length - 2} more expiring in this timeframe
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
                                 <div>
                                   <h5 className="font-semibold text-indigo-900 mb-2">📊 Market Analysis (Last 2 Years)</h5>
                                   <div className="space-y-2">
@@ -1561,10 +1672,24 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                                       <strong className="text-indigo-900">{fpdsInfo.count}</strong>
                                     </div>
                                     {fpdsInfo.avgValue > 0 && (
-                                      <div className="flex justify-between bg-white rounded p-2 text-sm">
-                                        <span className="text-gray-700">Average Value:</span>
-                                        <strong className="text-indigo-900">{formatCurrency(fpdsInfo.avgValue)}</strong>
-                                      </div>
+                                      <>
+                                        <div className="flex justify-between bg-white rounded p-2 text-sm">
+                                          <span className="text-gray-700">Average Value:</span>
+                                          <strong className="text-indigo-900">{formatCurrency(fpdsInfo.avgValue)}</strong>
+                                        </div>
+                                        {fpdsInfo.medianValue > 0 && (
+                                          <div className="flex justify-between bg-white rounded p-2 text-sm">
+                                            <span className="text-gray-700">Median Value:</span>
+                                            <strong className="text-indigo-900">{formatCurrency(fpdsInfo.medianValue)}</strong>
+                                          </div>
+                                        )}
+                                        {fpdsInfo.totalValue > 0 && (
+                                          <div className="flex justify-between bg-white rounded p-2 text-sm">
+                                            <span className="text-gray-700">Total Market Value:</span>
+                                            <strong className="text-indigo-900">{formatCurrency(fpdsInfo.totalValue)}</strong>
+                                          </div>
+                                        )}
+                                      </>
                                     )}
                                     {fpdsInfo.setAsidePercent > 0 && (
                                       <div className="flex justify-between bg-white rounded p-2 text-sm">
@@ -1585,25 +1710,6 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                                           <span className="text-indigo-900 font-medium">
                                             {winner.count} contract{winner.count > 1 ? 's' : ''} ({formatCurrency(winner.totalValue)})
                                           </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {fpdsInfo.expiringSoon && fpdsInfo.expiringSoon.length > 0 && (
-                                  <div>
-                                    <h5 className="font-semibold text-indigo-900 mb-2">⏰ Contracts Expiring Soon (Next 6 Months)</h5>
-                                    <div className="space-y-2">
-                                      {fpdsInfo.expiringSoon.map((contract, idx) => (
-                                        <div key={idx} className="bg-white rounded p-2 text-sm">
-                                          <div className="flex justify-between mb-1">
-                                            <span className="font-medium text-gray-700">{contract.vendorName || 'Unknown'}</span>
-                                            <span className="text-indigo-900 font-medium">{formatCurrency(contract.obligatedAmount)}</span>
-                                          </div>
-                                          <div className="text-xs text-gray-500">
-                                            Expires: {formatDate(contract.completionDate)}
-                                          </div>
                                         </div>
                                       ))}
                                     </div>
