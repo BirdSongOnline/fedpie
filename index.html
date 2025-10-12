@@ -18,16 +18,44 @@
     const { createClient } = supabase;
 
     // Initialize Supabase client
-    const supabaseUrl = 'https://cwuxqohxoaspqfzfdbpl.supabase.co'; // Replace with your URL
-    const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3dXhxb2h4b2FzcHFmemZkYnBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAxNzE1NDYsImV4cCI6MjA3NTc0NzU0Nn0.g8WcEodFl2ET7_UGEh-Z13bUNWci4vXAXhpZ_wzhtuc'; // Replace with your key
+    const supabaseUrl = 'https://cwuxqohxoaspqfzfdbpl.supabase.co';
+    const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3dXhxb2h4b2FzcHFmemZkYnBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAxNzE1NDYsImV4cCI6MjA3NTc0NzU0Nn0.g8WcEodFl2ET7_UGEh-Z13bUNWci4vXAXhpZ_wzhtuc';
     const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
 
     const BACKEND_URL = 'https://calm-narwhal-c32e6c.netlify.app/.netlify/functions/sam-proxy';
+    const FPDS_PROXY_URL = 'https://calm-narwhal-c32e6c.netlify.app/.netlify/functions/fpds-proxy';
     const OPENAI_PROXY_URL = 'https://calm-narwhal-c32e6c.netlify.app/.netlify/functions/openai-proxy';
+
+    // Agency code mapping for FPDS
+    const AGENCY_CODES = {
+      'DEPT OF THE INTERIOR': '1400',
+      'DEPARTMENT OF THE INTERIOR': '1400',
+      'INTERIOR': '1400',
+      'VETERANS AFFAIRS, DEPARTMENT OF': '3600',
+      'DEPARTMENT OF VETERANS AFFAIRS': '3600',
+      'VETERANS AFFAIRS': '3600',
+      'VA': '3600',
+      'HEALTH AND HUMAN SERVICES, DEPARTMENT OF': '7500',
+      'HHS': '7500',
+      'AGRICULTURE, DEPARTMENT OF': '1200',
+      'USDA': '1200',
+      'HOMELAND SECURITY, DEPARTMENT OF': '7000',
+      'DHS': '7000',
+      'GENERAL SERVICES ADMINISTRATION': '4700',
+      'GSA': '4700',
+      'OFFICE OF PERSONNEL MANAGEMENT': '2400',
+      'OPM': '2400',
+      'SMALL BUSINESS ADMINISTRATION': '7300',
+      'SBA': '7300',
+      'ENVIRONMENTAL PROTECTION AGENCY': '6800',
+      'EPA': '6800',
+      'NATIONAL SCIENCE FOUNDATION': '4900',
+      'NSF': '4900'
+    };
 
     // Auth Components
     function AuthForm({ onSuccess }) {
-      const [mode, setMode] = useState('signin'); // 'signin' or 'signup'
+      const [mode, setMode] = useState('signin');
       const [email, setEmail] = useState('');
       const [password, setPassword] = useState('');
       const [loading, setLoading] = useState(false);
@@ -326,6 +354,11 @@
       const [expandedScores, setExpandedScores] = useState({});
       const [showSearchOptions, setShowSearchOptions] = useState(false);
       
+      // FPDS Intelligence State
+      const [showFPDS, setShowFPDS] = useState(true);
+      const [fpdsData, setFpdsData] = useState({});
+      const [fpdsLoading, setFpdsLoading] = useState({});
+      
       const [analyzingOpp, setAnalyzingOpp] = useState(null);
       const [analyses, setAnalyses] = useState({});
       const [showAnalysis, setShowAnalysis] = useState({});
@@ -416,8 +449,143 @@
         setProfile(null);
       };
 
-      // Rest of your existing functions (calculateWinScore, analyzeWithAI, etc.)
-      // I'm including them below but they're unchanged from your current version
+      // FPDS Intelligence Functions
+      const getAgencyCode = (departmentName) => {
+        if (!departmentName) return null;
+        
+        const deptUpper = departmentName.toUpperCase();
+        
+        for (const [key, code] of Object.entries(AGENCY_CODES)) {
+          if (deptUpper.includes(key.toUpperCase())) {
+            return code;
+          }
+        }
+        
+        return null;
+      };
+
+      const fetchFPDSIntelligence = async (opp) => {
+        const noticeId = opp.noticeId;
+        
+        // Skip if already loaded or loading
+        if (fpdsData[noticeId] || fpdsLoading[noticeId]) {
+          return;
+        }
+
+        setFpdsLoading(prev => ({ ...prev, [noticeId]: true }));
+
+        try {
+          const naicsCode = opp.naicsCode;
+          const agencyCode = getAgencyCode(opp.department || opp.fullParentPathName);
+          
+          if (!naicsCode || !agencyCode) {
+            setFpdsData(prev => ({
+              ...prev,
+              [noticeId]: { error: 'Missing NAICS or agency code', count: 0 }
+            }));
+            return;
+          }
+          
+          // Query last 2 years of contracts
+          const endDate = new Date().toISOString().split('T')[0];
+          const startDate = new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          
+          const params = new URLSearchParams({
+            naics: naicsCode,
+            agency: agencyCode,
+            startDate: startDate,
+            endDate: endDate
+          });
+          
+          const response = await fetch(`${FPDS_PROXY_URL}?${params}`);
+          
+          if (!response.ok) {
+            throw new Error(`FPDS API error: ${response.status}`);
+          }
+          
+          const data = await response.json();
+          
+          if (data.success && data.data) {
+            const intelligence = analyzeContracts(data.data);
+            setFpdsData(prev => ({
+              ...prev,
+              [noticeId]: intelligence
+            }));
+          } else {
+            setFpdsData(prev => ({
+              ...prev,
+              [noticeId]: { error: data.error || 'No data', count: 0 }
+            }));
+          }
+        } catch (err) {
+          console.error('FPDS fetch error:', err);
+          setFpdsData(prev => ({
+            ...prev,
+            [noticeId]: { error: err.message, count: 0 }
+          }));
+        } finally {
+          setFpdsLoading(prev => ({ ...prev, [noticeId]: false }));
+        }
+      };
+
+      const analyzeContracts = (contracts) => {
+        if (!contracts || contracts.length === 0) {
+          return { count: 0, contracts: [] };
+        }
+
+        // Calculate statistics
+        const values = contracts
+          .map(c => c.obligatedAmount)
+          .filter(v => v > 0);
+        
+        const avgValue = values.length > 0 
+          ? values.reduce((a, b) => a + b, 0) / values.length 
+          : 0;
+        
+        // Count set-aside contracts
+        const setAsideCount = contracts.filter(c => 
+          c.setAside && (c.setAside.includes('8(A)') || c.setAside.includes('8A'))
+        ).length;
+        
+        // Group by vendor
+        const vendorMap = {};
+        contracts.forEach(c => {
+          if (c.vendorName) {
+            if (!vendorMap[c.vendorName]) {
+              vendorMap[c.vendorName] = {
+                name: c.vendorName,
+                count: 0,
+                totalValue: 0
+              };
+            }
+            vendorMap[c.vendorName].count++;
+            vendorMap[c.vendorName].totalValue += c.obligatedAmount || 0;
+          }
+        });
+        
+        // Get top 5 winners
+        const topWinners = Object.values(vendorMap)
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5);
+        
+        // Find expiring contracts
+        const now = new Date();
+        const sixMonths = new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000);
+        const expiringSoon = contracts.filter(c => {
+          if (!c.completionDate) return false;
+          const endDate = new Date(c.completionDate);
+          return endDate > now && endDate < sixMonths;
+        });
+
+        return {
+          count: contracts.length,
+          avgValue: avgValue,
+          setAsidePercent: contracts.length > 0 ? (setAsideCount / contracts.length * 100) : 0,
+          topWinners: topWinners,
+          expiringSoon: expiringSoon.slice(0, 3),
+          contracts: contracts
+        };
+      };
 
       const setQuickPreset = (preset) => {
         const today = new Date();
@@ -952,7 +1120,7 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
         );
       }
 
-      // Main app UI - keeping your existing layout
+      // Main app UI
       return (
         <div className="min-h-screen bg-gray-50 p-8">
           {showProfile && (
@@ -1124,6 +1292,16 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                 >
                   {filtersEnabled ? '✓ Profile Filters' : 'Profile Filters Off'}
                 </button>
+                <button
+                  onClick={() => setShowFPDS(!showFPDS)}
+                  className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
+                    showFPDS 
+                      ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' 
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {showFPDS ? '✓ FPDS Intelligence' : 'FPDS Intelligence Off'}
+                </button>
               </div>
             </div>
           </div>
@@ -1184,6 +1362,9 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                   const hasAnalysis = analyses[opp.noticeId];
                   const showingAnalysis = showAnalysis[opp.noticeId];
                   
+                  const fpdsInfo = fpdsData[opp.noticeId];
+                  const isFpdsLoading = fpdsLoading[opp.noticeId];
+                  
                   return (
                     <div
                       key={index}
@@ -1235,6 +1416,18 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                           >
                             {isAnalyzing ? '✨ Analyzing...' : hasAnalysis ? '✨ View AI Analysis' : '✨ Analyze with AI'}
                           </button>
+                          
+                          {showFPDS && !fpdsInfo && !isFpdsLoading && (
+                            <>
+                              <span className="text-gray-300">|</span>
+                              <button
+                                onClick={() => fetchFPDSIntelligence(opp)}
+                                className="text-sm text-indigo-600 hover:text-indigo-800 underline font-medium"
+                              >
+                                🔍 Load FPDS Intelligence
+                              </button>
+                            </>
+                          )}
                         </div>
 
                         {expandedScores[index] && (
@@ -1310,6 +1503,95 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                             </div>
                           </div>
                         )}
+
+                        {/* FPDS Intelligence Panel */}
+                        {showFPDS && fpdsInfo && (
+                          <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg p-5 mb-3 border-2 border-indigo-200">
+                            <div className="flex items-center justify-between mb-4">
+                              <h4 className="text-lg font-bold text-indigo-900 flex items-center gap-2">
+                                🔍 FPDS Market Intelligence
+                              </h4>
+                            </div>
+
+                            {fpdsInfo.error ? (
+                              <div className="text-sm text-gray-600">
+                                Unable to load FPDS data: {fpdsInfo.error}
+                              </div>
+                            ) : fpdsInfo.count === 0 ? (
+                              <div className="text-sm text-gray-600">
+                                No historical contracts found for this NAICS + Agency combination in the last 2 years.
+                              </div>
+                            ) : (
+                              <div className="space-y-4">
+                                <div>
+                                  <h5 className="font-semibold text-indigo-900 mb-2">📊 Market Analysis (Last 2 Years)</h5>
+                                  <div className="space-y-2">
+                                    <div className="flex justify-between bg-white rounded p-2 text-sm">
+                                      <span className="text-gray-700">Similar Contracts:</span>
+                                      <strong className="text-indigo-900">{fpdsInfo.count}</strong>
+                                    </div>
+                                    {fpdsInfo.avgValue > 0 && (
+                                      <div className="flex justify-between bg-white rounded p-2 text-sm">
+                                        <span className="text-gray-700">Average Value:</span>
+                                        <strong className="text-indigo-900">{formatCurrency(fpdsInfo.avgValue)}</strong>
+                                      </div>
+                                    )}
+                                    {fpdsInfo.setAsidePercent > 0 && (
+                                      <div className="flex justify-between bg-white rounded p-2 text-sm">
+                                        <span className="text-gray-700">8(a) Set-Aside Rate:</span>
+                                        <strong className="text-indigo-900">{fpdsInfo.setAsidePercent.toFixed(0)}%</strong>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {fpdsInfo.topWinners && fpdsInfo.topWinners.length > 0 && (
+                                  <div>
+                                    <h5 className="font-semibold text-indigo-900 mb-2">🏢 Top Winners (This NAICS + Agency)</h5>
+                                    <div className="space-y-2">
+                                      {fpdsInfo.topWinners.slice(0, 3).map((winner, idx) => (
+                                        <div key={idx} className="flex justify-between bg-white rounded p-2 text-sm">
+                                          <span className="text-gray-700">{idx + 1}. {winner.name}</span>
+                                          <span className="text-indigo-900 font-medium">
+                                            {winner.count} contract{winner.count > 1 ? 's' : ''} ({formatCurrency(winner.totalValue)})
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {fpdsInfo.expiringSoon && fpdsInfo.expiringSoon.length > 0 && (
+                                  <div>
+                                    <h5 className="font-semibold text-indigo-900 mb-2">⏰ Contracts Expiring Soon (Next 6 Months)</h5>
+                                    <div className="space-y-2">
+                                      {fpdsInfo.expiringSoon.map((contract, idx) => (
+                                        <div key={idx} className="bg-white rounded p-2 text-sm">
+                                          <div className="flex justify-between mb-1">
+                                            <span className="font-medium text-gray-700">{contract.vendorName || 'Unknown'}</span>
+                                            <span className="text-indigo-900 font-medium">{formatCurrency(contract.obligatedAmount)}</span>
+                                          </div>
+                                          <div className="text-xs text-gray-500">
+                                            Expires: {formatDate(contract.completionDate)}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {showFPDS && isFpdsLoading && (
+                          <div className="bg-indigo-50 rounded-lg p-4 mb-3 border border-indigo-200">
+                            <div className="flex items-center gap-2 text-indigo-700">
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-700"></div>
+                              <span className="text-sm">Loading FPDS market intelligence...</span>
+                            </div>
+                          </div>
+                        )}
                         
                         <div className="flex flex-wrap gap-2">
                           {relevance.naics && (
@@ -1340,78 +1622,78 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                         </div>
                       </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-                      <div>
-                        <div className="text-xs text-gray-500">Agency</div>
-                        <div className="text-sm font-medium text-gray-900">
-                          {opp.department || opp.fullParentPathName || 'N/A'}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                        <div>
+                          <div className="text-xs text-gray-500">Agency</div>
+                          <div className="text-sm font-medium text-gray-900">
+                            {opp.department || opp.fullParentPathName || 'N/A'}
+                          </div>
                         </div>
-                      </div>
 
-                      <div>
-                        <div className="text-xs text-gray-500 mb-1">Response Deadline</div>
-                        {(() => {
-                          const countdown = getDeadlineCountdown(opp.responseDeadLine);
-                          if (!countdown) {
-                            return <div className="text-sm font-medium text-gray-900">N/A</div>;
-                          }
-                          return (
-                            <div>
-                              <div className={`inline-flex items-center gap-1 px-2 py-1 rounded border font-bold text-xs ${countdown.color}`}>
-                                <span>{countdown.icon}</span>
-                                <span>{countdown.urgency}</span>
+                        <div>
+                          <div className="text-xs text-gray-500 mb-1">Response Deadline</div>
+                          {(() => {
+                            const countdown = getDeadlineCountdown(opp.responseDeadLine);
+                            if (!countdown) {
+                              return <div className="text-sm font-medium text-gray-900">N/A</div>;
+                            }
+                            return (
+                              <div>
+                                <div className={`inline-flex items-center gap-1 px-2 py-1 rounded border font-bold text-xs ${countdown.color}`}>
+                                  <span>{countdown.icon}</span>
+                                  <span>{countdown.urgency}</span>
+                                </div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {formatDate(opp.responseDeadLine)}
+                                </div>
                               </div>
-                              <div className="text-xs text-gray-500 mt-1">
-                                {formatDate(opp.responseDeadLine)}
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
+                            );
+                          })()}
+                        </div>
 
-                      <div>
-                        <div className="text-xs text-gray-500">Award Amount</div>
-                        <div className="text-sm font-medium text-gray-900">
-                          {formatCurrency(opp.award?.amount)}
+                        <div>
+                          <div className="text-xs text-gray-500">Award Amount</div>
+                          <div className="text-sm font-medium text-gray-900">
+                            {formatCurrency(opp.award?.amount)}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="text-xs text-gray-500">Set-Aside</div>
+                          <div className="text-sm font-medium text-gray-900">
+                            {opp.typeOfSetAside || 'None'}
+                          </div>
                         </div>
                       </div>
 
-                      <div>
-                        <div className="text-xs text-gray-500">Set-Aside</div>
-                        <div className="text-sm font-medium text-gray-900">
-                          {opp.typeOfSetAside || 'None'}
+                      <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                        <div className="flex items-center gap-4 text-xs text-gray-500">
+                          <span>Notice ID: {opp.noticeId || 'N/A'}</span>
+                          <span>•</span>
+                          <span>Posted: {formatDate(opp.postedDate)}</span>
+                          {opp.naicsCode && (
+                            <>
+                              <span>•</span>
+                              <span>NAICS: {opp.naicsCode}</span>
+                            </>
+                          )}
                         </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-                      <div className="flex items-center gap-4 text-xs text-gray-500">
-                        <span>Notice ID: {opp.noticeId || 'N/A'}</span>
-                        <span>•</span>
-                        <span>Posted: {formatDate(opp.postedDate)}</span>
-                        {opp.naicsCode && (
-                          <>
-                            <span>•</span>
-                            <span>NAICS: {opp.naicsCode}</span>
-                          </>
+                        {opp.noticeId && (
+                          <a
+                            href={`https://sam.gov/opp/${opp.noticeId}/view`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium inline-flex items-center gap-2"
+                          >
+                            View on SAM.gov
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                          </a>
                         )}
                       </div>
-                      {opp.noticeId && (
-                        <a
-                          href={`https://sam.gov/opp/${opp.noticeId}/view`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium inline-flex items-center gap-2"
-                        >
-                          View on SAM.gov
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
-                        </a>
-                      )}
                     </div>
-                  </div>
-                );
+                  );
                 })}
               </div>
 
