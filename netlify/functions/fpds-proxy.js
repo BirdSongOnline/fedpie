@@ -18,29 +18,55 @@ exports.handler = async (event, context) => {
   try {
     const params = event.queryStringParameters || {};
     
+    // Try a super simple query first - just get recent contracts
+    let query = `LAST_MOD_DATE:[2024/10/01,2025/10/12]`;
+    
+    // Add NAICS if provided
+    if (params.naics) {
+      query = `PRINCIPAL_NAICS_CODE:"${params.naics}"`;
+    }
+    
     // Build FPDS query URL
     const baseUrl = 'https://www.fpds.gov/ezsearch/FEEDS/ATOM';
-    const queryParams = new URLSearchParams({
-      FEEDNAME: 'PUBLIC',
-      q: buildFPDSQuery(params)
-    });
-
-    const fpdsUrl = `${baseUrl}?${queryParams.toString()}`;
+    const fpdsUrl = `${baseUrl}?FEEDNAME=PUBLIC&q=${encodeURIComponent(query)}`;
     
-    console.log('Querying FPDS:', fpdsUrl);
+    console.log('Querying FPDS with:', fpdsUrl);
 
-    // Fetch from FPDS
+    // Fetch from FPDS with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    
     const response = await fetch(fpdsUrl, {
       headers: {
-        'User-Agent': 'FedPIE/1.0'
-      }
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/atom+xml, application/xml, text/xml'
+      },
+      signal: controller.signal
     });
+    
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
-      throw new Error(`FPDS API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error('FPDS error status:', response.status);
+      console.error('FPDS error body:', errorText.substring(0, 500));
+      
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: `FPDS returned status ${response.status}`,
+          details: errorText.substring(0, 200),
+          query: query
+        })
+      };
     }
 
     const xmlText = await response.text();
+    
+    console.log('FPDS response received, length:', xmlText.length);
+    console.log('First 500 chars:', xmlText.substring(0, 500));
     
     // Parse the Atom feed XML
     const parsedData = parseAtomFeed(xmlText);
@@ -52,18 +78,31 @@ exports.handler = async (event, context) => {
         success: true,
         count: parsedData.length,
         data: parsedData,
-        query: params
+        query: query
       })
     };
 
   } catch (error) {
     console.error('FPDS Proxy Error:', error);
+    
+    if (error.name === 'AbortError') {
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: 'FPDS request timed out after 15 seconds'
+        })
+      };
+    }
+    
     return {
-      statusCode: 500,
+      statusCode: 200,
       headers,
       body: JSON.stringify({
         success: false,
-        error: error.message
+        error: error.message,
+        type: error.name
       })
     };
   }
