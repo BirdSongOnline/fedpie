@@ -80,31 +80,22 @@ function buildFPDSQuery(params) {
   
   // Agency Code
   if (params.agency) {
-    conditions.push(`AGENCY_CODE:"${params.agency}"`);
+    conditions.push(`CONTRACTING_AGENCY_ID:"${params.agency}"`);
   }
   
-  // Date range (signed date)
+  // Date range (last modified date works better than signed date)
   if (params.startDate && params.endDate) {
     const start = params.startDate.replace(/-/g, '/');
     const end = params.endDate.replace(/-/g, '/');
-    conditions.push(`SIGNED_DATE:[${start},${end}]`);
+    conditions.push(`LAST_MOD_DATE:[${start},${end}]`);
   }
   
-  // Set-aside type
-  if (params.setAside) {
-    conditions.push(`SOCIO_ECONOMIC_INDICATORS:"${params.setAside}"`);
+  // If no conditions, return just NAICS and Agency
+  if (conditions.length === 0) {
+    return '*';
   }
   
-  // Contract value range
-  if (params.minValue && params.maxValue) {
-    conditions.push(`OBLIGATED_AMOUNT:[${params.minValue},${params.maxValue}]`);
-  }
-  
-  // Default to contracts only (not IDVs)
-  conditions.push('CONTRACT_TYPE:"AWARD"');
-  
-  // If no conditions, return wildcard
-  return conditions.length > 0 ? conditions.join(' ') : '*';
+  return conditions.join(' ');
 }
 
 // Parse FPDS Atom feed XML
