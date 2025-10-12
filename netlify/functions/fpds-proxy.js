@@ -25,12 +25,10 @@ exports.handler = async (event, context) => {
       // Query for contracts with this NAICS code
       query = `PRINCIPAL_NAICS_CODE:"${params.naics}"`;
       
-      // Add date filter - look back 2 years OR forward 1 year for expiring contracts
+      // Add date filter - look back 2 years
       const today = new Date();
       const twoYearsAgo = new Date(today);
       twoYearsAgo.setFullYear(today.getFullYear() - 2);
-      const oneYearAhead = new Date(today);
-      oneYearAhead.setFullYear(today.getFullYear() + 1);
       
       const formatDate = (date) => {
         const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -63,19 +61,13 @@ exports.handler = async (event, context) => {
     
     console.log('Querying FPDS with:', fpdsUrl);
 
-    // Fetch from FPDS with timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    
+    // Simple fetch without abort controller
     const response = await fetch(fpdsUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'application/atom+xml, application/xml, text/xml'
-      },
-      signal: controller.signal
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/atom+xml, application/xml, text/xml, */*'
+      }
     });
-    
-    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -116,25 +108,16 @@ exports.handler = async (event, context) => {
 
   } catch (error) {
     console.error('FPDS Proxy Error:', error);
-    
-    if (error.name === 'AbortError') {
-      return {
-        statusCode: 200,
-        headers,
-        body: JSON.stringify({
-          success: false,
-          error: 'FPDS request timed out after 15 seconds'
-        })
-      };
-    }
+    console.error('Error stack:', error.stack);
     
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
         success: false,
-        error: error.message,
-        type: error.name
+        error: error.message || 'Unknown error occurred',
+        type: error.name || 'Error',
+        stack: error.stack ? error.stack.substring(0, 500) : 'No stack trace'
       })
     };
   }
