@@ -1,6 +1,8 @@
 // netlify/functions/fpds-proxy.js
 // Federal Procurement Data System (FPDS) API Proxy
 
+const https = require('https');
+
 exports.handler = async (event, context) => {
   // Enable CORS
   const headers = {
@@ -61,32 +63,31 @@ exports.handler = async (event, context) => {
     
     console.log('Querying FPDS with:', fpdsUrl);
 
-    // Simple fetch without abort controller
-    const response = await fetch(fpdsUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/atom+xml, application/xml, text/xml, */*'
-      }
+    // Use Node.js https module instead of fetch
+    const xmlText = await new Promise((resolve, reject) => {
+      https.get(fpdsUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/atom+xml, application/xml, text/xml, */*'
+        }
+      }, (response) => {
+        let data = '';
+        
+        response.on('data', (chunk) => {
+          data += chunk;
+        });
+        
+        response.on('end', () => {
+          if (response.statusCode === 200) {
+            resolve(data);
+          } else {
+            reject(new Error(`FPDS returned status ${response.statusCode}`));
+          }
+        });
+      }).on('error', (error) => {
+        reject(error);
+      });
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('FPDS error status:', response.status);
-      console.error('FPDS error body:', errorText.substring(0, 500));
-      
-      return {
-        statusCode: 200,
-        headers,
-        body: JSON.stringify({
-          success: false,
-          error: `FPDS returned status ${response.status}`,
-          details: errorText.substring(0, 200),
-          query: query
-        })
-      };
-    }
-
-    const xmlText = await response.text();
     
     console.log('FPDS response received, length:', xmlText.length);
     

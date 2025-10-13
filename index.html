@@ -514,43 +514,25 @@
             return;
           }
           
-          // Query FPDS directly from browser - bypass Netlify proxy
-          const today = new Date();
-          const twoYearsAgo = new Date(today);
-          twoYearsAgo.setFullYear(today.getFullYear() - 2);
-          
-          const formatDate = (date) => {
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            const year = date.getFullYear();
-            return `${month}/${day}/${year}`;
-          };
-          
-          const query = `PRINCIPAL_NAICS_CODE:"${naicsCode}" LAST_MOD_DATE:[${formatDate(twoYearsAgo)},${formatDate(today)}]`;
-          const fpdsUrl = `https://www.fpds.gov/ezsearch/FEEDS/ATOM?FEEDNAME=PUBLIC&q=${encodeURIComponent(query)}`;
-          
-          console.log('Querying FPDS directly:', fpdsUrl);
-          
-          const response = await fetch(fpdsUrl, {
-            mode: 'cors',
-            headers: {
-              'Accept': 'application/atom+xml, application/xml, text/xml'
-            }
+          // Use Netlify proxy (now with https module)
+          const params = new URLSearchParams({
+            naics: naicsCode
           });
           
+          const fpdsProxyUrl = `${FPDS_PROXY_URL}?${params}`;
+          console.log('Calling FPDS proxy:', fpdsProxyUrl);
+          
+          const response = await fetch(fpdsProxyUrl);
+          
           if (!response.ok) {
-            throw new Error(`FPDS returned status ${response.status}`);
+            throw new Error(`Proxy returned status ${response.status}`);
           }
           
-          const xmlText = await response.text();
-          console.log('FPDS XML response length:', xmlText.length);
+          const data = await response.json();
+          console.log('FPDS response:', data);
           
-          // Parse the XML
-          const contracts = parseSimpleFPDSXML(xmlText);
-          console.log('Parsed contracts:', contracts.length);
-          
-          if (contracts.length > 0) {
-            const intelligence = analyzeContracts(contracts);
+          if (data.success && data.data && data.data.length > 0) {
+            const intelligence = analyzeContracts(data.data);
             setFpdsData(prev => ({
               ...prev,
               [noticeId]: intelligence
@@ -558,7 +540,10 @@
           } else {
             setFpdsData(prev => ({
               ...prev,
-              [noticeId]: { error: 'No contracts found for this NAICS code', count: 0 }
+              [noticeId]: { 
+                error: data.error || 'No contracts found for this NAICS code in the last 2 years', 
+                count: 0 
+              }
             }));
           }
         } catch (err) {
@@ -570,49 +555,6 @@
         } finally {
           setFpdsLoading(prev => ({ ...prev, [noticeId]: false }));
         }
-      };
-      
-      // Simple XML parser for FPDS Atom feed
-      const parseSimpleFPDSXML = (xmlText) => {
-        const contracts = [];
-        
-        try {
-          // Extract all <entry> elements
-          const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
-          let match;
-          
-          while ((match = entryRegex.exec(xmlText)) !== null) {
-            const entryContent = match[1];
-            
-            // Extract contract data
-            const contract = {
-              piid: extractXMLTag(entryContent, 'PIID'),
-              vendorName: extractXMLTag(entryContent, 'vendorName') || extractXMLTag(entryContent, 'UEI_NAME'),
-              obligatedAmount: parseFloat(extractXMLTag(entryContent, 'obligatedAmount') || '0'),
-              signedDate: extractXMLTag(entryContent, 'signedDate'),
-              completionDate: extractXMLTag(entryContent, 'currentCompletionDate') || extractXMLTag(entryContent, 'ultimateCompletionDate'),
-              naicsCode: extractXMLTag(entryContent, 'principalNAICSCode') || extractXMLTag(entryContent, 'NAICS_CODE'),
-              setAside: extractXMLTag(entryContent, 'typeOfSetAside'),
-              description: extractXMLTag(entryContent, 'descriptionOfContractRequirement')
-            };
-            
-            if (contract.piid || contract.vendorName) {
-              contracts.push(contract);
-            }
-          }
-          
-          return contracts;
-        } catch (error) {
-          console.error('XML parsing error:', error);
-          return [];
-        }
-      };
-      
-      // Helper: Extract text from XML tag
-      const extractXMLTag = (xml, tagName) => {
-        const regex = new RegExp(`<(?:ns\\d+:)?${tagName}[^>]*>([^<]*)<`, 'i');
-        const match = xml.match(regex);
-        return match ? match[1].trim() : null;
       };
 
       const analyzeContracts = (contracts) => {
