@@ -492,6 +492,7 @@
 
         setRecompeteLoading(true);
         const allContracts = [];
+        let totalFound = 0;
 
         try {
           for (const naics of profile.naicsCodes) {
@@ -508,25 +509,31 @@
             const data = await response.json();
             
             if (data.success && data.data && data.data.length > 0) {
+              totalFound += data.data.length;
               const now = new Date();
-              const twelveMonths = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+              const twentyFourMonths = new Date(now.getTime() + 730 * 24 * 60 * 60 * 1000); // Extended to 24 months
               
               const expiring = data.data.filter(c => {
                 if (!c.completionDate) return false;
                 const endDate = new Date(c.completionDate);
-                return endDate > now && endDate <= twelveMonths;
+                return endDate > now && endDate <= twentyFourMonths;
               }).map(c => {
                 const endDate = new Date(c.completionDate);
                 const monthsUntil = Math.round((endDate - now) / (30 * 24 * 60 * 60 * 1000));
                 return { ...c, monthsUntilExpiration: monthsUntil };
               });
               
+              console.log(`NAICS ${naics}: Found ${data.data.length} total contracts, ${expiring.length} expiring in next 24 months`);
               allContracts.push(...expiring);
             }
           }
 
           setRecompeteContracts(allContracts);
-          console.log(`Found ${allContracts.length} expiring contracts`);
+          console.log(`\n📊 SUMMARY: Found ${allContracts.length} expiring contracts from ${totalFound} total contracts across ${profile.naicsCodes.length} NAICS codes`);
+          
+          if (allContracts.length === 0 && totalFound > 0) {
+            alert(`Found ${totalFound} total contracts, but none are expiring in the next 24 months. Try checking FPDS directly or expanding your search timeframe.`);
+          }
         } catch (err) {
           console.error('Error loading re-competes:', err);
           alert('Error loading re-compete data: ' + err.message);
@@ -621,12 +628,14 @@
         if (groupBy === 'urgency') {
           const urgent = contracts.filter(c => c.monthsUntilExpiration <= 3);
           const high = contracts.filter(c => c.monthsUntilExpiration > 3 && c.monthsUntilExpiration <= 6);
-          const watch = contracts.filter(c => c.monthsUntilExpiration > 6);
+          const watch = contracts.filter(c => c.monthsUntilExpiration > 6 && c.monthsUntilExpiration <= 12);
+          const planning = contracts.filter(c => c.monthsUntilExpiration > 12);
           
           return [
             { label: '🔴 URGENT (0-3 months)', contracts: urgent },
             { label: '🟠 HIGH PRIORITY (3-6 months)', contracts: high },
-            { label: '🟡 WATCH (6-12 months)', contracts: watch }
+            { label: '🟡 WATCH (6-12 months)', contracts: watch },
+            { label: '🔵 PLANNING (12-24 months)', contracts: planning }
           ];
         } else if (groupBy === 'agency') {
           const grouped = {};
@@ -660,7 +669,7 @@
       const filterContracts = (contracts) => {
         if (filterTimeframe === 'all') return contracts;
         
-        const monthsMap = { '3mo': 3, '6mo': 6, '12mo': 12 };
+        const monthsMap = { '3mo': 3, '6mo': 6, '12mo': 12, '24mo': 24 };
         const maxMonths = monthsMap[filterTimeframe];
         
         return contracts.filter(c => c.monthsUntilExpiration <= maxMonths);
@@ -796,6 +805,7 @@
         const threeMonths = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
         const sixMonths = new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000);
         const twelveMonths = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+        const twentyFourMonths = new Date(now.getTime() + 730 * 24 * 60 * 60 * 1000);
         
         const filterExpiring = (startDate, endDate) => {
           return contracts.filter(c => {
@@ -808,6 +818,7 @@
         const expiring3Months = filterExpiring(now, threeMonths);
         const expiring6Months = filterExpiring(threeMonths, sixMonths);
         const expiring12Months = filterExpiring(sixMonths, twelveMonths);
+        const expiring24Months = filterExpiring(twelveMonths, twentyFourMonths);
         
         const addMonthsUntilExpiration = (contractList) => {
           return contractList.map(c => {
@@ -834,7 +845,8 @@
             expiring3Months: addMonthsUntilExpiration(expiring3Months),
             expiring6Months: addMonthsUntilExpiration(expiring6Months),
             expiring12Months: addMonthsUntilExpiration(expiring12Months),
-            totalExpiring: expiring3Months.length + expiring6Months.length + expiring12Months.length
+            expiring24Months: addMonthsUntilExpiration(expiring24Months),
+            totalExpiring: expiring3Months.length + expiring6Months.length + expiring12Months.length + expiring24Months.length
           },
           contracts
         };
@@ -1685,7 +1697,7 @@ IMPORTANT: Respond ONLY with valid JSON.`;
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h2 className="text-2xl font-bold text-gray-900">Re-Compete Intelligence</h2>
-                    <p className="text-sm text-gray-600 mt-1">Track expiring contracts across all your NAICS codes</p>
+                    <p className="text-sm text-gray-600 mt-1">Track contracts expiring in the next 24 months</p>
                   </div>
                   <button onClick={loadAllRecompetes} disabled={recompeteLoading} className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400 transition-colors font-medium flex items-center gap-2">
                     {recompeteLoading ? (
@@ -1733,10 +1745,11 @@ IMPORTANT: Respond ONLY with valid JSON.`;
                       <div>
                         <label className="text-sm font-medium text-gray-700 mr-2">Timeframe:</label>
                         <select value={filterTimeframe} onChange={(e) => setFilterTimeframe(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
-                          <option value="all">All (12 months)</option>
+                          <option value="all">All (24 months)</option>
                           <option value="3mo">0-3 months</option>
                           <option value="6mo">0-6 months</option>
                           <option value="12mo">0-12 months</option>
+                          <option value="24mo">0-24 months</option>
                         </select>
                       </div>
                     </div>
@@ -1748,7 +1761,7 @@ IMPORTANT: Respond ONLY with valid JSON.`;
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
                   <div className="text-6xl mb-4">🔍</div>
                   <h3 className="text-xl font-semibold text-gray-900 mb-2">No Re-Compete Data Loaded</h3>
-                  <p className="text-gray-600 mb-6">Click "Load All Re-Competes" to scan for expiring contracts</p>
+                  <p className="text-gray-600 mb-6">Click "Load All Re-Competes" to scan for contracts expiring in the next 24 months</p>
                 </div>
               )}
 
@@ -1772,7 +1785,11 @@ IMPORTANT: Respond ONLY with valid JSON.`;
                             <div className="flex items-start justify-between mb-3">
                               <div className="flex-1">
                                 <div className="flex items-center gap-3 mb-2">
-                                  <span className="text-2xl">{contract.monthsUntilExpiration <= 3 ? '🔴' : contract.monthsUntilExpiration <= 6 ? '🟠' : '🟡'}</span>
+                                  <span className="text-2xl">
+                                    {contract.monthsUntilExpiration <= 3 ? '🔴' : 
+                                     contract.monthsUntilExpiration <= 6 ? '🟠' : 
+                                     contract.monthsUntilExpiration <= 12 ? '🟡' : '🔵'}
+                                  </span>
                                   <div>
                                     <h4 className="font-bold text-gray-900 text-lg">{contract.vendorName || 'Unknown Vendor'}</h4>
                                     <div className="text-sm text-gray-600">Expires in {contract.monthsUntilExpiration} month{contract.monthsUntilExpiration !== 1 ? 's' : ''} • {formatDate(contract.completionDate)}</div>
