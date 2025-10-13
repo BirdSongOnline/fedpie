@@ -26,33 +26,6 @@
     const FPDS_PROXY_URL = 'https://calm-narwhal-c32e6c.netlify.app/.netlify/functions/fpds-proxy';
     const OPENAI_PROXY_URL = 'https://calm-narwhal-c32e6c.netlify.app/.netlify/functions/openai-proxy';
 
-    // Agency code mapping for FPDS
-    const AGENCY_CODES = {
-      'DEPT OF THE INTERIOR': '1400',
-      'DEPARTMENT OF THE INTERIOR': '1400',
-      'INTERIOR': '1400',
-      'VETERANS AFFAIRS, DEPARTMENT OF': '3600',
-      'DEPARTMENT OF VETERANS AFFAIRS': '3600',
-      'VETERANS AFFAIRS': '3600',
-      'VA': '3600',
-      'HEALTH AND HUMAN SERVICES, DEPARTMENT OF': '7500',
-      'HHS': '7500',
-      'AGRICULTURE, DEPARTMENT OF': '1200',
-      'USDA': '1200',
-      'HOMELAND SECURITY, DEPARTMENT OF': '7000',
-      'DHS': '7000',
-      'GENERAL SERVICES ADMINISTRATION': '4700',
-      'GSA': '4700',
-      'OFFICE OF PERSONNEL MANAGEMENT': '2400',
-      'OPM': '2400',
-      'SMALL BUSINESS ADMINISTRATION': '7300',
-      'SBA': '7300',
-      'ENVIRONMENTAL PROTECTION AGENCY': '6800',
-      'EPA': '6800',
-      'NATIONAL SCIENCE FOUNDATION': '4900',
-      'NSF': '4900'
-    };
-
     // Auth Components
     function AuthForm({ onSuccess }) {
       const [mode, setMode] = useState('signin');
@@ -412,7 +385,6 @@
 
       const loadProfileFromSupabase = async () => {
         try {
-          // Try to fetch existing profile
           const { data, error } = await supabaseClient
             .from('profiles')
             .select('*')
@@ -426,7 +398,6 @@
           }
 
           if (data) {
-            // Profile exists, use it
             setProfile({
               companyName: data.company_name || 'My Company',
               naicsCodes: data.naics_codes || [],
@@ -437,7 +408,6 @@
               minResponseDays: data.min_response_days || 7
             });
           } else {
-            // No profile exists yet, create default and insert it
             const defaultProfile = getDefaultProfile();
             
             const { error: insertError } = await supabaseClient
@@ -471,7 +441,8 @@
         try {
           const { error } = await supabaseClient
             .from('profiles')
-            .update({
+            .upsert({
+              id: user.id,
               company_name: newProfile.companyName,
               naics_codes: newProfile.naicsCodes,
               set_asides: newProfile.setAsides,
@@ -480,8 +451,7 @@
               max_contract_value: newProfile.maxContractValue,
               min_response_days: newProfile.minResponseDays,
               updated_at: new Date().toISOString()
-            })
-            .eq('id', user.id);
+            });
 
           if (error) throw error;
 
@@ -701,27 +671,6 @@
       };
 
       // FPDS Intelligence Functions
-      const getAgencyCode = (departmentName) => {
-        if (!departmentName) return null;
-        
-        const deptUpper = departmentName.toUpperCase();
-        
-        for (const [key, code] of Object.entries(AGENCY_CODES)) {
-          if (deptUpper.includes(key.toUpperCase())) {
-            return code;
-          }
-        }
-        
-        if (deptUpper.includes('DEFENSE') || deptUpper.includes('DOD')) return '9700';
-        if (deptUpper.includes('INTERIOR') || deptUpper.includes('DOI')) return '1400';
-        if (deptUpper.includes('VETERANS') || deptUpper.includes('VA')) return '3600';
-        if (deptUpper.includes('HEALTH') && deptUpper.includes('HUMAN')) return '7500';
-        if (deptUpper.includes('HOMELAND') || deptUpper.includes('DHS')) return '7000';
-        if (deptUpper.includes('AGRICULTURE') || deptUpper.includes('USDA')) return '1200';
-        
-        return null;
-      };
-
       const fetchFPDSIntelligence = async (opp) => {
         const noticeId = opp.noticeId;
         
@@ -737,15 +686,13 @@
           if (!naicsCode) {
             setFpdsData(prev => ({
               ...prev,
-              [noticeId]: { error: 'No NAICS code found for this opportunity', count: 0 }
+              [noticeId]: { error: 'No NAICS code found', count: 0 }
             }));
             return;
           }
           
           const params = new URLSearchParams({ naics: naicsCode });
-          const fpdsProxyUrl = `${FPDS_PROXY_URL}?${params}`;
-          
-          const response = await fetch(fpdsProxyUrl);
+          const response = await fetch(`${FPDS_PROXY_URL}?${params}`);
           
           if (!response.ok) {
             throw new Error(`Proxy returned status ${response.status}`);
@@ -763,7 +710,7 @@
             setFpdsData(prev => ({
               ...prev,
               [noticeId]: { 
-                error: data.error || 'No contracts found for this NAICS code in the last 2 years', 
+                error: 'No contracts found for this NAICS code', 
                 count: 0 
               }
             }));
@@ -784,36 +731,22 @@
           return { count: 0, contracts: [] };
         }
 
-        const values = contracts
-          .map(c => c.obligatedAmount)
-          .filter(v => v > 0);
-        
-        const avgValue = values.length > 0 
-          ? values.reduce((a, b) => a + b, 0) / values.length 
-          : 0;
-        
-        const medianValue = values.length > 0
-          ? values.sort((a, b) => a - b)[Math.floor(values.length / 2)]
-          : 0;
-        
+        const values = contracts.map(c => c.obligatedAmount).filter(v => v > 0);
+        const avgValue = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+        const medianValue = values.length > 0 ? values.sort((a, b) => a - b)[Math.floor(values.length / 2)] : 0;
         const totalValue = values.reduce((a, b) => a + b, 0);
         
         const setAsideCount = contracts.filter(c => 
           c.setAside && (c.setAside.includes('8(A)') || c.setAside.includes('8A'))
         ).length;
         
-        // Historical Trends Analysis
         const contractsByYear = {};
         contracts.forEach(c => {
           if (c.signedDate) {
             const year = new Date(c.signedDate).getFullYear();
             if (year >= 1990 && year <= 2025) {
               if (!contractsByYear[year]) {
-                contractsByYear[year] = {
-                  count: 0,
-                  totalValue: 0,
-                  contracts: []
-                };
+                contractsByYear[year] = { count: 0, totalValue: 0, contracts: [] };
               }
               contractsByYear[year].count++;
               contractsByYear[year].totalValue += c.obligatedAmount || 0;
@@ -822,14 +755,12 @@
           }
         });
         
-        const yearlyData = Object.keys(contractsByYear)
-          .sort()
-          .map(year => ({
-            year: parseInt(year),
-            count: contractsByYear[year].count,
-            totalValue: contractsByYear[year].totalValue,
-            avgValue: contractsByYear[year].totalValue / contractsByYear[year].count
-          }));
+        const yearlyData = Object.keys(contractsByYear).sort().map(year => ({
+          year: parseInt(year),
+          count: contractsByYear[year].count,
+          totalValue: contractsByYear[year].totalValue,
+          avgValue: contractsByYear[year].totalValue / contractsByYear[year].count
+        }));
         
         let trend = 'stable';
         let trendPercentage = 0;
@@ -841,14 +772,8 @@
             
             if (firstYear > 0) {
               trendPercentage = ((lastYear - firstYear) / firstYear) * 100;
-              
-              if (trendPercentage > 15) {
-                trend = 'growing';
-              } else if (trendPercentage < -15) {
-                trend = 'declining';
-              } else {
-                trend = 'stable';
-              }
+              if (trendPercentage > 15) trend = 'growing';
+              else if (trendPercentage < -15) trend = 'declining';
             }
           }
         }
@@ -857,12 +782,7 @@
         contracts.forEach(c => {
           if (c.vendorName) {
             if (!vendorMap[c.vendorName]) {
-              vendorMap[c.vendorName] = {
-                name: c.vendorName,
-                count: 0,
-                totalValue: 0,
-                contracts: []
-              };
+              vendorMap[c.vendorName] = { name: c.vendorName, count: 0, totalValue: 0, contracts: [] };
             }
             vendorMap[c.vendorName].count++;
             vendorMap[c.vendorName].totalValue += c.obligatedAmount || 0;
@@ -870,32 +790,24 @@
           }
         });
         
-        const topWinners = Object.values(vendorMap)
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 5);
+        const topWinners = Object.values(vendorMap).sort((a, b) => b.count - a.count).slice(0, 5);
         
         const now = new Date();
         const threeMonths = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
         const sixMonths = new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000);
         const twelveMonths = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
         
-        const expiring3Months = contracts.filter(c => {
-          if (!c.completionDate) return false;
-          const endDate = new Date(c.completionDate);
-          return endDate > now && endDate <= threeMonths;
-        }).sort((a, b) => new Date(a.completionDate) - new Date(b.completionDate));
+        const filterExpiring = (startDate, endDate) => {
+          return contracts.filter(c => {
+            if (!c.completionDate) return false;
+            const end = new Date(c.completionDate);
+            return end > startDate && end <= endDate;
+          }).sort((a, b) => new Date(a.completionDate) - new Date(b.completionDate));
+        };
         
-        const expiring6Months = contracts.filter(c => {
-          if (!c.completionDate) return false;
-          const endDate = new Date(c.completionDate);
-          return endDate > threeMonths && endDate <= sixMonths;
-        }).sort((a, b) => new Date(a.completionDate) - new Date(b.completionDate));
-        
-        const expiring12Months = contracts.filter(c => {
-          if (!c.completionDate) return false;
-          const endDate = new Date(c.completionDate);
-          return endDate > sixMonths && endDate <= twelveMonths;
-        }).sort((a, b) => new Date(a.completionDate) - new Date(b.completionDate));
+        const expiring3Months = filterExpiring(now, threeMonths);
+        const expiring6Months = filterExpiring(threeMonths, sixMonths);
+        const expiring12Months = filterExpiring(sixMonths, twelveMonths);
         
         const addMonthsUntilExpiration = (contractList) => {
           return contractList.map(c => {
@@ -907,15 +819,15 @@
 
         return {
           count: contracts.length,
-          avgValue: avgValue,
-          medianValue: medianValue,
-          totalValue: totalValue,
+          avgValue,
+          medianValue,
+          totalValue,
           setAsidePercent: contracts.length > 0 ? (setAsideCount / contracts.length * 100) : 0,
-          topWinners: topWinners,
+          topWinners,
           historicalTrends: {
-            yearlyData: yearlyData,
-            trend: trend,
-            trendPercentage: trendPercentage,
+            yearlyData,
+            trend,
+            trendPercentage,
             yearsAnalyzed: yearlyData.length
           },
           recompeteAlerts: {
@@ -924,7 +836,7 @@
             expiring12Months: addMonthsUntilExpiration(expiring12Months),
             totalExpiring: expiring3Months.length + expiring6Months.length + expiring12Months.length
           },
-          contracts: contracts
+          contracts
         };
       };
 
@@ -965,39 +877,16 @@
       };
 
       const handleSearch = () => {
-        const today = new Date();
-        const endDate = new Date(searchParams.postedTo);
-        
-        if (endDate > today) {
-          const formatDate = (date) => {
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-          };
-          
-          setSearchParams({
-            ...searchParams,
-            postedTo: formatDate(today)
-          });
-        }
-        
         setShowSearchOptions(false);
         fetchOpportunities();
       };
 
       const toggleScoreBreakdown = (index) => {
-        setExpandedScores(prev => ({
-          ...prev,
-          [index]: !prev[index]
-        }));
+        setExpandedScores(prev => ({ ...prev, [index]: !prev[index] }));
       };
 
       const toggleAnalysisPanel = (noticeId) => {
-        setShowAnalysis(prev => ({
-          ...prev,
-          [noticeId]: !prev[noticeId]
-        }));
+        setShowAnalysis(prev => ({ ...prev, [noticeId]: !prev[noticeId] }));
       };
 
       const getScoreColor = (score) => {
@@ -1052,28 +941,23 @@ WIN PROBABILITY SCORE: ${score}/100 (${tier.label})
 Please analyze this opportunity and provide a structured assessment. Return your response as valid JSON with these exact keys:
 
 {
-  "executiveSummary": "2-3 sentence overview of what this opportunity is and why it matters for this company",
-  "keyRequirements": ["requirement 1", "requirement 2", "requirement 3"],
-  "evaluationCriteria": "What will proposals be scored on and what matters most",
-  "advantages": "Why this company is well-positioned, including specific qualifications",
-  "redFlags": "Any concerns, deal-breakers, or competitive challenges (or 'None identified' if looks good)",
-  "levelOfEffort": "Small/Medium/Large proposal expected, with estimated hours"
+  "executiveSummary": "2-3 sentence overview",
+  "keyRequirements": ["req1", "req2", "req3"],
+  "evaluationCriteria": "What matters most",
+  "advantages": "Why well-positioned",
+  "redFlags": "Concerns or 'None identified'",
+  "levelOfEffort": "Small/Medium/Large with hours"
 }
 
-IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting, code blocks, or text outside the JSON object.`;
+IMPORTANT: Respond ONLY with valid JSON.`;
 
           const response = await fetch(OPENAI_PROXY_URL, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ prompt })
           });
 
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || `API error: ${response.status}`);
-          }
+          if (!response.ok) throw new Error(`API error: ${response.status}`);
 
           const data = await response.json();
           const aiResponse = data.choices[0].message.content;
@@ -1084,25 +968,17 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
             analysis = JSON.parse(jsonText);
           } catch (e) {
             analysis = {
-              executiveSummary: "Analysis completed but response format was unexpected.",
-              keyRequirements: ["Unable to parse structured requirements"],
+              executiveSummary: "Analysis format unexpected.",
+              keyRequirements: ["Unable to parse"],
               evaluationCriteria: "See raw response",
               advantages: "See raw response",
               redFlags: "See raw response",
-              levelOfEffort: "Unable to determine",
-              rawResponse: aiResponse
+              levelOfEffort: "Unable to determine"
             };
           }
 
-          setAnalyses(prev => ({
-            ...prev,
-            [opp.noticeId]: analysis
-          }));
-          
-          setShowAnalysis(prev => ({
-            ...prev,
-            [opp.noticeId]: true
-          }));
+          setAnalyses(prev => ({ ...prev, [opp.noticeId]: analysis }));
+          setShowAnalysis(prev => ({ ...prev, [opp.noticeId]: true }));
         } catch (err) {
           console.error('Analysis error:', err);
           alert(`Failed to analyze: ${err.message}`);
@@ -1119,28 +995,28 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
           const setAside = opp.typeOfSetAside.toLowerCase();
           if (setAside.includes('8(a)')) {
             score += 30;
-            breakdown.setAside = { points: 30, reason: '8(a) Set-Aside (sole source eligible)' };
+            breakdown.setAside = { points: 30, reason: '8(a) Set-Aside' };
           } else if (setAside.includes('native') || setAside.includes('anc')) {
             score += 25;
-            breakdown.setAside = { points: 25, reason: 'ANC Set-Aside (special preferences)' };
+            breakdown.setAside = { points: 25, reason: 'ANC Set-Aside' };
           } else if (setAside.includes('small disadvantaged') || setAside.includes('sdb')) {
             score += 15;
             breakdown.setAside = { points: 15, reason: 'SDB Set-Aside' };
           } else if (setAside.includes('small business')) {
             score += 15;
-            breakdown.setAside = { points: 15, reason: 'Small Business Set-Aside' };
+            breakdown.setAside = { points: 15, reason: 'Small Business' };
           } else {
             breakdown.setAside = { points: 0, reason: 'No applicable set-aside' };
           }
         } else {
-          breakdown.setAside = { points: 0, reason: 'Unrestricted competition' };
+          breakdown.setAside = { points: 0, reason: 'Unrestricted' };
         }
 
         if (opp.naicsCode && profile.naicsCodes?.includes(opp.naicsCode)) {
           score += 20;
-          breakdown.naics = { points: 20, reason: `NAICS ${opp.naicsCode} - Direct match` };
+          breakdown.naics = { points: 20, reason: `NAICS ${opp.naicsCode} match` };
         } else {
-          breakdown.naics = { points: 0, reason: 'NAICS not in your portfolio' };
+          breakdown.naics = { points: 0, reason: 'NAICS not in portfolio' };
         }
 
         if (opp.fullParentPathName && profile.targetAgencies?.length > 0) {
@@ -1153,12 +1029,12 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
           
           if (isTier1 && matchedAgency) {
             score += 20;
-            breakdown.agency = { points: 20, reason: `Tier 1 Target Agency (${matchedAgency})` };
+            breakdown.agency = { points: 20, reason: `Tier 1 Target (${matchedAgency})` };
           } else if (matchedAgency) {
             score += 10;
             breakdown.agency = { points: 10, reason: `Target Agency (${matchedAgency})` };
           } else {
-            breakdown.agency = { points: 0, reason: 'Not a target agency' };
+            breakdown.agency = { points: 0, reason: 'Not target agency' };
           }
         } else {
           breakdown.agency = { points: 0, reason: 'Agency unknown' };
@@ -1168,13 +1044,10 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
           const amount = opp.award.amount;
           if (amount >= profile.minContractValue && amount <= profile.maxContractValue) {
             score += 15;
-            breakdown.value = { points: 15, reason: 'In optimal value range' };
-          } else if (amount < profile.minContractValue) {
-            score += 5;
-            breakdown.value = { points: 5, reason: 'Below target range (lower profit)' };
+            breakdown.value = { points: 15, reason: 'In value range' };
           } else {
             score += 5;
-            breakdown.value = { points: 5, reason: 'Above target range (higher competition)' };
+            breakdown.value = { points: 5, reason: 'Outside range' };
           }
         } else {
           breakdown.value = { points: 0, reason: 'Value not specified' };
@@ -1187,29 +1060,25 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
           
           if (daysUntilDeadline >= 21) {
             score += 10;
-            breakdown.responseTime = { points: 10, reason: `${daysUntilDeadline} days (comfortable timeline)` };
+            breakdown.responseTime = { points: 10, reason: `${daysUntilDeadline} days` };
           } else if (daysUntilDeadline >= 14) {
             score += 7;
-            breakdown.responseTime = { points: 7, reason: `${daysUntilDeadline} days (adequate time)` };
+            breakdown.responseTime = { points: 7, reason: `${daysUntilDeadline} days` };
           } else if (daysUntilDeadline >= 7) {
             score += 4;
-            breakdown.responseTime = { points: 4, reason: `${daysUntilDeadline} days (tight timeline)` };
-          } else if (daysUntilDeadline > 0) {
-            score += 0;
-            breakdown.responseTime = { points: 0, reason: `${daysUntilDeadline} days (too rushed)` };
+            breakdown.responseTime = { points: 4, reason: `${daysUntilDeadline} days` };
           } else {
-            score += 0;
-            breakdown.responseTime = { points: 0, reason: 'Deadline passed' };
+            breakdown.responseTime = { points: 0, reason: 'Too rushed' };
           }
         } else {
-          breakdown.responseTime = { points: 0, reason: 'No deadline specified' };
+          breakdown.responseTime = { points: 0, reason: 'No deadline' };
         }
 
         if (opp.typeOfSetAside && opp.typeOfSetAside.toLowerCase() !== 'none') {
           score += 5;
-          breakdown.competition = { points: 5, reason: 'Limited competition (set-aside)' };
+          breakdown.competition = { points: 5, reason: 'Limited competition' };
         } else {
-          breakdown.competition = { points: 0, reason: 'Full and open competition' };
+          breakdown.competition = { points: 0, reason: 'Full competition' };
         }
 
         return { score, breakdown };
@@ -1267,11 +1136,9 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
 
         const filtered = opps.filter(opp => {
           const matches = calculateRelevance(opp);
-          
           const hasRelevanceMatch = matches.naics || matches.setAside || matches.agency;
           const passesValueFilter = !opp.award?.amount || matches.contractValue;
           const passesTimeFilter = !opp.responseDeadLine || matches.responseTime;
-          
           return hasRelevanceMatch && passesValueFilter && passesTimeFilter;
         });
 
@@ -1285,25 +1152,8 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
       const isServicesContract = (opportunity) => {
         const naicsCode = opportunity.naicsCode;
         if (!naicsCode) return true;
-        
         const naicsNum = parseInt(naicsCode);
-        
-        if (naicsNum >= 310000 && naicsNum <= 339999) {
-          return false;
-        }
-        
-        if (
-          (naicsNum >= 510000 && naicsNum <= 519999) ||
-          (naicsNum >= 540000 && naicsNum <= 549999) ||
-          (naicsNum >= 560000 && naicsNum <= 569999) ||
-          (naicsNum >= 610000 && naicsNum <= 619999) ||
-          (naicsNum >= 620000 && naicsNum <= 629999) ||
-          (naicsNum >= 710000 && naicsNum <= 719999) ||
-          (naicsNum >= 810000 && naicsNum <= 819999)
-        ) {
-          return true;
-        }
-        
+        if (naicsNum >= 310000 && naicsNum <= 339999) return false;
         return true;
       };
 
@@ -1327,14 +1177,11 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
           const response = await fetch(`${BACKEND_URL}?${params}`);
           
           if (!response.ok) {
-            throw new Error(`API Error: ${response.status} ${response.statusText}`);
+            throw new Error(`API Error: ${response.status}`);
           }
           
           const data = await response.json();
-          
-          if (data.error) {
-            throw new Error(data.error);
-          }
+          if (data.error) throw new Error(data.error);
           
           const allOpps = data.opportunitiesData || [];
           setTotalCount(allOpps.length);
@@ -1477,66 +1324,31 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                   <h2 className="text-2xl font-bold text-gray-900 mb-6">Search Options</h2>
                   
                   <div className="mb-6">
-                    <label className="block text-sm font-medium text-gray-700 mb-3">
-                      Quick Presets
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-3">Quick Presets</label>
                     <div className="flex gap-3 flex-wrap">
-                      <button
-                        onClick={() => setQuickPreset('last90')}
-                        className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors font-medium"
-                      >
-                        Last 90 Days
-                      </button>
-                      <button
-                        onClick={() => setQuickPreset('last30')}
-                        className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors font-medium"
-                      >
-                        Last 30 Days
-                      </button>
-                      <button
-                        onClick={() => setQuickPreset('2025')}
-                        className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors font-medium"
-                      >
-                        All of 2025
-                      </button>
+                      <button onClick={() => setQuickPreset('last90')} className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors font-medium">Last 90 Days</button>
+                      <button onClick={() => setQuickPreset('last30')} className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors font-medium">Last 30 Days</button>
+                      <button onClick={() => setQuickPreset('2025')} className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors font-medium">All of 2025</button>
                     </div>
                   </div>
 
                   <div className="mb-6">
-                    <label className="block text-sm font-medium text-gray-700 mb-3">
-                      Custom Date Range
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-3">Custom Date Range</label>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-xs text-gray-600 mb-1">From Date</label>
-                        <input
-                          type="date"
-                          value={searchParams.postedFrom}
-                          onChange={(e) => setSearchParams({ ...searchParams, postedFrom: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
+                        <input type="date" value={searchParams.postedFrom} onChange={(e) => setSearchParams({ ...searchParams, postedFrom: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
                       </div>
                       <div>
                         <label className="block text-xs text-gray-600 mb-1">To Date</label>
-                        <input
-                          type="date"
-                          value={searchParams.postedTo}
-                          onChange={(e) => setSearchParams({ ...searchParams, postedTo: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
+                        <input type="date" value={searchParams.postedTo} onChange={(e) => setSearchParams({ ...searchParams, postedTo: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
                       </div>
                     </div>
                   </div>
 
                   <div className="mb-6">
-                    <label className="block text-sm font-medium text-gray-700 mb-3">
-                      Maximum Results
-                    </label>
-                    <select
-                      value={searchParams.limit}
-                      onChange={(e) => setSearchParams({ ...searchParams, limit: parseInt(e.target.value) })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
+                    <label className="block text-sm font-medium text-gray-700 mb-3">Maximum Results</label>
+                    <select value={searchParams.limit} onChange={(e) => setSearchParams({ ...searchParams, limit: parseInt(e.target.value) })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                       <option value="50">50 results</option>
                       <option value="100">100 results</option>
                       <option value="250">250 results</option>
@@ -1546,18 +1358,8 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                   </div>
 
                   <div className="flex gap-3 pt-4 border-t border-gray-200">
-                    <button
-                      onClick={handleSearch}
-                      className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                    >
-                      🔍 Search SAM.gov
-                    </button>
-                    <button
-                      onClick={() => setShowSearchOptions(false)}
-                      className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-                    >
-                      Cancel
-                    </button>
+                    <button onClick={handleSearch} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium">🔍 Search SAM.gov</button>
+                    <button onClick={() => setShowSearchOptions(false)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">Cancel</button>
                   </div>
                 </div>
               </div>
@@ -1568,102 +1370,30 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <div className="flex items-start justify-between">
                 <div>
-                  <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                    FedPIE - Federal Procurement Intelligence Engine
-                  </h1>
-                  <p className="text-gray-600">
-                    {profile?.companyName} - {user.email}
-                  </p>
+                  <h1 className="text-3xl font-bold text-gray-900 mb-2">FedPIE - Federal Procurement Intelligence Engine</h1>
+                  <p className="text-gray-600">{profile?.companyName} - {user.email}</p>
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setShowProfile(true)}
-                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
-                  >
-                    ⚙️ Company Profile
-                  </button>
-                  <button
-                    onClick={handleSignOut}
-                    className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors text-sm font-medium"
-                  >
-                    Sign Out
-                  </button>
+                  <button onClick={() => setShowProfile(true)} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium">⚙️ Company Profile</button>
+                  <button onClick={handleSignOut} className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors text-sm font-medium">Sign Out</button>
                 </div>
               </div>
 
               <div className="mt-6 flex gap-2">
-                <button
-                  onClick={() => setCurrentView('opportunities')}
-                  className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                    currentView === 'opportunities'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  📋 Opportunities
-                </button>
-                <button
-                  onClick={() => setCurrentView('recompete')}
-                  className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                    currentView === 'recompete'
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  🚨 Re-Compete Dashboard
-                </button>
+                <button onClick={() => setCurrentView('opportunities')} className={`px-6 py-3 rounded-lg font-medium transition-colors ${currentView === 'opportunities' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>📋 Opportunities</button>
+                <button onClick={() => setCurrentView('recompete')} className={`px-6 py-3 rounded-lg font-medium transition-colors ${currentView === 'recompete' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>🚨 Re-Compete Dashboard</button>
               </div>
               
               <div className="mt-4 flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-2">
                   <div className={`w-3 h-3 rounded-full ${fetchLoading ? 'bg-yellow-500 animate-pulse' : error ? 'bg-red-500' : 'bg-green-500'}`}></div>
-                  <span className="text-sm text-gray-600">
-                    {fetchLoading ? 'Fetching...' : error ? 'Connection Error' : 'Connected to SAM.gov'}
-                  </span>
+                  <span className="text-sm text-gray-600">{fetchLoading ? 'Fetching...' : error ? 'Connection Error' : 'Connected to SAM.gov'}</span>
                 </div>
-                <button
-                  onClick={() => setShowSearchOptions(!showSearchOptions)}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
-                >
-                  🔍 Search Options
-                </button>
-                <button
-                  onClick={fetchOpportunities}
-                  disabled={fetchLoading}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors text-sm"
-                >
-                  Refresh Data
-                </button>
-                <button
-                  onClick={() => setServicesFilterEnabled(!servicesFilterEnabled)}
-                  className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
-                    servicesFilterEnabled 
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {servicesFilterEnabled ? '✓ Services Only' : 'Show All Types'}
-                </button>
-                <button
-                  onClick={() => setFiltersEnabled(!filtersEnabled)}
-                  className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
-                    filtersEnabled 
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {filtersEnabled ? '✓ Profile Filters' : 'Profile Filters Off'}
-                </button>
-                <button
-                  onClick={() => setShowFPDS(!showFPDS)}
-                  className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
-                    showFPDS 
-                      ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' 
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {showFPDS ? '✓ FPDS Intelligence' : 'FPDS Intelligence Off'}
-                </button>
+                <button onClick={() => setShowSearchOptions(!showSearchOptions)} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium">🔍 Search Options</button>
+                <button onClick={fetchOpportunities} disabled={fetchLoading} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors text-sm">Refresh Data</button>
+                <button onClick={() => setServicesFilterEnabled(!servicesFilterEnabled)} className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${servicesFilterEnabled ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{servicesFilterEnabled ? '✓ Services Only' : 'Show All Types'}</button>
+                <button onClick={() => setFiltersEnabled(!filtersEnabled)} className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${filtersEnabled ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{filtersEnabled ? '✓ Profile Filters' : 'Profile Filters Off'}</button>
+                <button onClick={() => setShowFPDS(!showFPDS)} className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${showFPDS ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{showFPDS ? '✓ FPDS Intelligence' : 'FPDS Intelligence Off'}</button>
               </div>
             </div>
           </div>
@@ -1692,19 +1422,9 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-sm text-gray-600">
                         {filtersEnabled ? (
-                          <>
-                            Showing <span className="font-semibold">{filteredOpportunities.length} relevant opportunities</span>
-                            {opportunities.length > filteredOpportunities.length && (
-                              <span className="text-gray-500"> (filtered from {opportunities.length})</span>
-                            )}
-                          </>
+                          <>Showing <span className="font-semibold">{filteredOpportunities.length} relevant opportunities</span>{opportunities.length > filteredOpportunities.length && <span className="text-gray-500"> (filtered from {opportunities.length})</span>}</>
                         ) : (
-                          <>
-                            Showing <span className="font-semibold">{opportunities.length} opportunities</span>
-                            {totalCount > opportunities.length && servicesFilterEnabled && (
-                              <span className="text-gray-500"> ({opportunities.length} services from {totalCount} total)</span>
-                            )}
-                          </>
+                          <>Showing <span className="font-semibold">{opportunities.length} opportunities</span>{totalCount > opportunities.length && servicesFilterEnabled && <span className="text-gray-500"> ({opportunities.length} services from {totalCount} total)</span>}</>
                         )}
                       </div>
                     </div>
@@ -1725,45 +1445,224 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                       const isAnalyzing = analyzingOpp === opp.noticeId;
                       const hasAnalysis = analyses[opp.noticeId];
                       const showingAnalysis = showAnalysis[opp.noticeId];
-                      
                       const fpdsInfo = fpdsData[opp.noticeId];
                       const isFpdsLoading = fpdsLoading[opp.noticeId];
                       
                       return (
-                        <div
-                          key={index}
-                          className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
-                        >
-                          {/* Opportunity content - keeping this brief for space */}
+                        <div key={index} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
                           <div className="mb-3">
                             <div className="flex items-start gap-3 mb-2">
-                              <h3 className="text-lg font-semibold text-gray-900 flex-1">
-                                {opp.title || 'Untitled Opportunity'}
-                              </h3>
+                              <h3 className="text-lg font-semibold text-gray-900 flex-1">{opp.title || 'Untitled Opportunity'}</h3>
                               
                               <div className="flex items-center gap-2">
-                                <div className={`px-3 py-1.5 border-2 rounded-lg font-bold text-sm ${scoreColor}`}>
-                                  {score}% Win
-                                </div>
-                                
-                                <div className={`text-2xl ${tier.color}`} title={tier.label}>
-                                  {tier.emoji}
-                                </div>
+                                <div className={`px-3 py-1.5 border-2 rounded-lg font-bold text-sm ${scoreColor}`}>{score}% Win</div>
+                                <div className={`text-2xl ${tier.color}`} title={tier.label}>{tier.emoji}</div>
                               </div>
                             </div>
-
-                            <div className="text-sm text-gray-600 mb-4">
-                              {opp.department || opp.fullParentPathName || 'N/A'} • {formatDate(opp.responseDeadLine)} • {formatCurrency(opp.award?.amount)}
+                            
+                            <div className="mb-2">
+                              <span className={`text-sm font-medium ${tier.color}`}>{tier.label}</span>
                             </div>
 
+                            <div className="flex gap-2 mb-2">
+                              <button onClick={() => toggleScoreBreakdown(index)} className="text-sm text-blue-600 hover:text-blue-800 underline">{expandedScores[index] ? '▼ Hide' : '▶ Show'} Score Breakdown</button>
+                              <span className="text-gray-300">|</span>
+                              <button onClick={() => analyzeWithAI(opp, index)} disabled={isAnalyzing} className={`text-sm font-medium underline ${isAnalyzing ? 'text-gray-400 cursor-wait' : 'text-purple-600 hover:text-purple-800'}`}>{isAnalyzing ? '✨ Analyzing...' : hasAnalysis ? '✨ View AI Analysis' : '✨ Analyze with AI'}</button>
+                              {showFPDS && !fpdsInfo && !isFpdsLoading && (
+                                <>
+                                  <span className="text-gray-300">|</span>
+                                  <button onClick={() => fetchFPDSIntelligence(opp)} className="text-sm text-indigo-600 hover:text-indigo-800 underline font-medium">🔍 Load FPDS Intelligence</button>
+                                </>
+                              )}
+                            </div>
+
+                            {expandedScores[index] && (
+                              <div className="bg-gray-50 rounded-lg p-4 mb-3 space-y-2">
+                                <div className="font-semibold text-sm text-gray-700 mb-2">Why this scored {score}%:</div>
+                                {Object.entries(breakdown).map(([key, data]) => (
+                                  <div key={key} className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-700">{data.reason}</span>
+                                    <span className={`font-semibold ${data.points > 0 ? 'text-green-600' : 'text-gray-400'}`}>+{data.points} pts</span>
+                                  </div>
+                                ))}
+                                <div className="pt-2 border-t border-gray-200 flex justify-between font-bold text-sm">
+                                  <span>Total Score</span>
+                                  <span className="text-blue-600">{score}/100</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {showingAnalysis && hasAnalysis && (
+                              <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-lg p-5 mb-3 border border-purple-200">
+                                <div className="flex items-center justify-between mb-4">
+                                  <h4 className="text-lg font-bold text-purple-900 flex items-center gap-2">✨ AI Analysis</h4>
+                                  <button onClick={() => toggleAnalysisPanel(opp.noticeId)} className="text-gray-500 hover:text-gray-700 text-xl">✕</button>
+                                </div>
+
+                                <div className="space-y-4">
+                                  <div>
+                                    <h5 className="font-semibold text-purple-900 mb-2">Executive Summary</h5>
+                                    <p className="text-gray-700 text-sm leading-relaxed">{analyses[opp.noticeId].executiveSummary}</p>
+                                  </div>
+
+                                  <div>
+                                    <h5 className="font-semibold text-purple-900 mb-2">Key Requirements</h5>
+                                    <ul className="list-disc list-inside space-y-1 text-gray-700 text-sm">
+                                      {Array.isArray(analyses[opp.noticeId].keyRequirements) ? (
+                                        analyses[opp.noticeId].keyRequirements.map((req, idx) => (
+                                          <li key={idx}>{req}</li>
+                                        ))
+                                      ) : (
+                                        <li>{analyses[opp.noticeId].keyRequirements}</li>
+                                      )}
+                                    </ul>
+                                  </div>
+
+                                  <div>
+                                    <h5 className="font-semibold text-purple-900 mb-2">Evaluation Criteria</h5>
+                                    <p className="text-gray-700 text-sm leading-relaxed">{analyses[opp.noticeId].evaluationCriteria}</p>
+                                  </div>
+
+                                  <div>
+                                    <h5 className="font-semibold text-purple-900 mb-2">Your Advantages</h5>
+                                    <p className="text-gray-700 text-sm leading-relaxed">{analyses[opp.noticeId].advantages}</p>
+                                  </div>
+
+                                  <div>
+                                    <h5 className="font-semibold text-purple-900 mb-2">Red Flags / Risks</h5>
+                                    <p className="text-gray-700 text-sm leading-relaxed">{analyses[opp.noticeId].redFlags}</p>
+                                  </div>
+
+                                  <div>
+                                    <h5 className="font-semibold text-purple-900 mb-2">Level of Effort</h5>
+                                    <p className="text-gray-700 text-sm leading-relaxed">{analyses[opp.noticeId].levelOfEffort}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {showFPDS && fpdsInfo && fpdsInfo.count > 0 && (
+                              <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg p-5 mb-3 border-2 border-indigo-200">
+                                <div className="flex items-center justify-between mb-4">
+                                  <h4 className="text-lg font-bold text-indigo-900 flex items-center gap-2">🔍 FPDS Market Intelligence</h4>
+                                </div>
+
+                                <div className="space-y-4">
+                                  {fpdsInfo.recompeteAlerts && fpdsInfo.recompeteAlerts.totalExpiring > 0 && (
+                                    <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4">
+                                      <h5 className="font-bold text-orange-900 mb-2">🚨 Re-Compete Alerts ({fpdsInfo.recompeteAlerts.totalExpiring})</h5>
+                                      <p className="text-sm text-orange-800 mb-2">Contracts expiring soon - position for re-compete!</p>
+                                      {fpdsInfo.recompeteAlerts.expiring3Months.length > 0 && (
+                                        <div className="text-sm">
+                                          <div className="font-semibold text-red-900 mb-1">🔴 URGENT (0-3 months): {fpdsInfo.recompeteAlerts.expiring3Months.length}</div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  <div>
+                                    <h5 className="font-semibold text-indigo-900 mb-2">📊 Market Analysis</h5>
+                                    <div className="space-y-2">
+                                      <div className="flex justify-between bg-white rounded p-2 text-sm">
+                                        <span className="text-gray-700">Similar Contracts:</span>
+                                        <strong className="text-indigo-900">{fpdsInfo.count}</strong>
+                                      </div>
+                                      {fpdsInfo.avgValue > 0 && (
+                                        <div className="flex justify-between bg-white rounded p-2 text-sm">
+                                          <span className="text-gray-700">Average Value:</span>
+                                          <strong className="text-indigo-900">{formatCurrency(fpdsInfo.avgValue)}</strong>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {fpdsInfo.topWinners && fpdsInfo.topWinners.length > 0 && (
+                                    <div>
+                                      <h5 className="font-semibold text-indigo-900 mb-2">🏢 Top Winners</h5>
+                                      <div className="space-y-2">
+                                        {fpdsInfo.topWinners.slice(0, 3).map((winner, idx) => (
+                                          <div key={idx} className="flex justify-between bg-white rounded p-2 text-sm">
+                                            <span className="text-gray-700">{idx + 1}. {winner.name}</span>
+                                            <span className="text-indigo-900 font-medium">{winner.count} contracts</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {showFPDS && isFpdsLoading && (
+                              <div className="bg-indigo-50 rounded-lg p-4 mb-3 border border-indigo-200">
+                                <div className="flex items-center gap-2 text-indigo-700">
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-700"></div>
+                                  <span className="text-sm">Loading FPDS intelligence...</span>
+                                </div>
+                              </div>
+                            )}
+                            
+                            <div className="flex flex-wrap gap-2 mb-4">
+                              {relevance.naics && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">✓ NAICS Match</span>}
+                              {relevance.setAside && <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">✓ Set-Aside Match</span>}
+                              {relevance.agency && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">✓ Target Agency</span>}
+                              {relevance.contractValue && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">✓ In Value Range</span>}
+                              {relevance.responseTime && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded">✓ Adequate Time</span>}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                            <div>
+                              <div className="text-xs text-gray-500">Agency</div>
+                              <div className="text-sm font-medium text-gray-900">{opp.department || opp.fullParentPathName || 'N/A'}</div>
+                            </div>
+
+                            <div>
+                              <div className="text-xs text-gray-500 mb-1">Response Deadline</div>
+                              {(() => {
+                                const countdown = getDeadlineCountdown(opp.responseDeadLine);
+                                if (!countdown) return <div className="text-sm font-medium text-gray-900">N/A</div>;
+                                return (
+                                  <div>
+                                    <div className={`inline-flex items-center gap-1 px-2 py-1 rounded border font-bold text-xs ${countdown.color}`}>
+                                      <span>{countdown.icon}</span>
+                                      <span>{countdown.urgency}</span>
+                                    </div>
+                                    <div className="text-xs text-gray-500 mt-1">{formatDate(opp.responseDeadLine)}</div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+
+                            <div>
+                              <div className="text-xs text-gray-500">Award Amount</div>
+                              <div className="text-sm font-medium text-gray-900">{formatCurrency(opp.award?.amount)}</div>
+                            </div>
+
+                            <div>
+                              <div className="text-xs text-gray-500">Set-Aside</div>
+                              <div className="text-sm font-medium text-gray-900">{opp.typeOfSetAside || 'None'}</div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                            <div className="flex items-center gap-4 text-xs text-gray-500">
+                              <span>Notice ID: {opp.noticeId || 'N/A'}</span>
+                              <span>•</span>
+                              <span>Posted: {formatDate(opp.postedDate)}</span>
+                              {opp.naicsCode && (
+                                <>
+                                  <span>•</span>
+                                  <span>NAICS: {opp.naicsCode}</span>
+                                </>
+                              )}
+                            </div>
                             {opp.noticeId && (
-                              <a
-                                href={`https://sam.gov/opp/${opp.noticeId}/view`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium inline-flex items-center gap-2"
-                              >
+                              <a href={`https://sam.gov/opp/${opp.noticeId}/view`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium inline-flex items-center gap-2">
                                 View on SAM.gov
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
                               </a>
                             )}
                           </div>
@@ -1774,12 +1673,7 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
 
                   {(filtersEnabled ? filteredOpportunities : opportunities).length === 0 && (
                     <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-                      <p className="text-gray-600">
-                        {filtersEnabled 
-                          ? 'No opportunities match your profile criteria.'
-                          : 'No opportunities found'
-                        }
-                      </p>
+                      <p className="text-gray-600">{filtersEnabled ? 'No opportunities match your profile criteria.' : 'No opportunities found'}</p>
                     </div>
                   )}
                 </>
@@ -1791,15 +1685,9 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h2 className="text-2xl font-bold text-gray-900">Re-Compete Intelligence</h2>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Track expiring contracts across all your NAICS codes
-                    </p>
+                    <p className="text-sm text-gray-600 mt-1">Track expiring contracts across all your NAICS codes</p>
                   </div>
-                  <button
-                    onClick={loadAllRecompetes}
-                    disabled={recompeteLoading}
-                    className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400 transition-colors font-medium flex items-center gap-2"
-                  >
+                  <button onClick={loadAllRecompetes} disabled={recompeteLoading} className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400 transition-colors font-medium flex items-center gap-2">
                     {recompeteLoading ? (
                       <>
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
@@ -1828,20 +1716,14 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                       </div>
                       <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-lg p-4 border border-orange-200">
                         <div className="text-sm text-orange-700 font-medium">Pursuing</div>
-                        <div className="text-3xl font-bold text-orange-900">
-                          {trackedContracts.filter(t => t.status === 'pursuing').length}
-                        </div>
+                        <div className="text-3xl font-bold text-orange-900">{trackedContracts.filter(t => t.status === 'pursuing').length}</div>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-4 flex-wrap">
                       <div>
                         <label className="text-sm font-medium text-gray-700 mr-2">Group by:</label>
-                        <select
-                          value={groupBy}
-                          onChange={(e) => setGroupBy(e.target.value)}
-                          className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                        >
+                        <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
                           <option value="urgency">Urgency</option>
                           <option value="agency">Agency</option>
                           <option value="naics">NAICS Code</option>
@@ -1850,11 +1732,7 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
 
                       <div>
                         <label className="text-sm font-medium text-gray-700 mr-2">Timeframe:</label>
-                        <select
-                          value={filterTimeframe}
-                          onChange={(e) => setFilterTimeframe(e.target.value)}
-                          className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                        >
+                        <select value={filterTimeframe} onChange={(e) => setFilterTimeframe(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
                           <option value="all">All (12 months)</option>
                           <option value="3mo">0-3 months</option>
                           <option value="6mo">0-6 months</option>
@@ -1869,12 +1747,8 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
               {recompeteContracts.length === 0 && !recompeteLoading && (
                 <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
                   <div className="text-6xl mb-4">🔍</div>
-                  <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                    No Re-Compete Data Loaded
-                  </h3>
-                  <p className="text-gray-600 mb-6">
-                    Click "Load All Re-Competes" to scan for expiring contracts across your NAICS codes
-                  </p>
+                  <h3 className="text-xl font-semibold text-gray-900 mb-2">No Re-Compete Data Loaded</h3>
+                  <p className="text-gray-600 mb-6">Click "Load All Re-Competes" to scan for expiring contracts</p>
                 </div>
               )}
 
@@ -1884,10 +1758,7 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                     <div className="bg-gradient-to-r from-purple-100 to-indigo-100 rounded-lg p-4 mb-3 border-2 border-purple-200">
                       <div className="flex items-center justify-between">
                         <h3 className="text-xl font-bold text-purple-900">{group.label}</h3>
-                        <div className="text-sm text-purple-700">
-                          {group.contracts.length} contract{group.contracts.length !== 1 ? 's' : ''} • 
-                          {formatCurrency(calculateTotalValue(group.contracts))}
-                        </div>
+                        <div className="text-sm text-purple-700">{group.contracts.length} contracts • {formatCurrency(calculateTotalValue(group.contracts))}</div>
                       </div>
                     </div>
 
@@ -1897,79 +1768,64 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                         const isBeingTracked = !!tracked;
 
                         return (
-                          <div
-                            key={idx}
-                            className={`bg-white rounded-lg shadow-sm border-2 p-5 transition-all ${
-                              isBeingTracked ? 'border-purple-300 bg-purple-50' : 'border-gray-200'
-                            }`}
-                          >
+                          <div key={idx} className={`bg-white rounded-lg shadow-sm border-2 p-5 ${isBeingTracked ? 'border-purple-300 bg-purple-50' : 'border-gray-200'}`}>
                             <div className="flex items-start justify-between mb-3">
                               <div className="flex-1">
                                 <div className="flex items-center gap-3 mb-2">
-                                  <span className="text-2xl">
-                                    {contract.monthsUntilExpiration <= 3 ? '🔴' : 
-                                     contract.monthsUntilExpiration <= 6 ? '🟠' : '🟡'}
-                                  </span>
+                                  <span className="text-2xl">{contract.monthsUntilExpiration <= 3 ? '🔴' : contract.monthsUntilExpiration <= 6 ? '🟠' : '🟡'}</span>
                                   <div>
-                                    <h4 className="font-bold text-gray-900 text-lg">
-                                      {contract.vendorName || 'Unknown Vendor'}
-                                    </h4>
-                                    <div className="text-sm text-gray-600">
-                                      Expires in {contract.monthsUntilExpiration} month{contract.monthsUntilExpiration !== 1 ? 's' : ''}
-                                      {' • '}
-                                      {formatDate(contract.completionDate)}
-                                    </div>
+                                    <h4 className="font-bold text-gray-900 text-lg">{contract.vendorName || 'Unknown Vendor'}</h4>
+                                    <div className="text-sm text-gray-600">Expires in {contract.monthsUntilExpiration} month{contract.monthsUntilExpiration !== 1 ? 's' : ''} • {formatDate(contract.completionDate)}</div>
                                   </div>
                                 </div>
                               </div>
 
                               <div className="text-right">
-                                <div className="text-2xl font-bold text-gray-900">
-                                  {formatCurrency(contract.obligatedAmount)}
-                                </div>
-                                <div className="text-xs text-gray-500">
-                                  PIID: {contract.piid}
-                                </div>
+                                <div className="text-2xl font-bold text-gray-900">{formatCurrency(contract.obligatedAmount)}</div>
+                                <div className="text-xs text-gray-500">PIID: {contract.piid}</div>
                               </div>
                             </div>
 
+                            <div className="grid grid-cols-3 gap-4 mb-3 text-sm">
+                              <div>
+                                <span className="text-gray-600">Agency:</span>
+                                <div className="font-medium text-gray-900">{contract.agencyName}</div>
+                              </div>
+                              <div>
+                                <span className="text-gray-600">NAICS:</span>
+                                <div className="font-medium text-gray-900">{contract.naicsCode}</div>
+                              </div>
+                              <div>
+                                <span className="text-gray-600">PSC:</span>
+                                <div className="font-medium text-gray-900">{contract.pscCode || 'N/A'}</div>
+                              </div>
+                            </div>
+
+                            {contract.description && (
+                              <p className="text-sm text-gray-700 mb-3 line-clamp-2">{contract.description}</p>
+                            )}
+
                             {!isBeingTracked ? (
-                              <button
-                                onClick={() => trackContract(contract)}
-                                className="w-full py-2 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
-                              >
+                              <button onClick={() => trackContract(contract)} className="w-full py-2 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium">
                                 📌 Track This Contract
                               </button>
                             ) : (
                               <div className="space-y-3 bg-white rounded-lg p-4 border border-purple-200">
                                 <div className="flex items-center gap-3">
                                   <label className="text-sm font-medium text-gray-700">Status:</label>
-                                  <select
-                                    value={tracked.status}
-                                    onChange={(e) => updateTrackingStatus(tracked.id, e.target.value)}
-                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                                  >
+                                  <select value={tracked.status} onChange={(e) => updateTrackingStatus(tracked.id, e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
                                     <option value="monitoring">👀 Monitoring</option>
                                     <option value="pursuing">🎯 Pursuing</option>
                                     <option value="pass">⏭️ Pass</option>
                                   </select>
-                                  <button
-                                    onClick={() => untrackContract(tracked.id)}
-                                    className="px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors text-sm"
-                                  >
+                                  <button onClick={() => untrackContract(tracked.id)} className="px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors text-sm">
                                     ✕ Untrack
                                   </button>
                                 </div>
 
                                 <div>
                                   <label className="text-sm font-medium text-gray-700 block mb-1">Notes:</label>
-                                  <textarea
-                                    value={tracked.notes || ''}
-                                    onChange={(e) => updateTrackingNotes(tracked.id, e.target.value)}
-                                    placeholder="Add notes about decision makers, strategy, etc..."
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
-                                    rows={2}
-                                  />
+                                  <textarea value={tracked.notes || ''} onChange={(e) => updateTrackingNotes(tracked.id, e.target.value)} placeholder="Add notes about decision makers, strategy, etc..." className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 text-sm" rows={2} />
                                 </div>
                               </div>
                             )}
