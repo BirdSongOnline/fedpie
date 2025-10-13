@@ -90,11 +90,13 @@ exports.handler = async (event, context) => {
     });
     
     console.log('FPDS response received, length:', xmlText.length);
+    console.log('First 1000 chars:', xmlText.substring(0, 1000));
     
     // Parse the Atom feed XML
     const parsedData = parseAtomFeed(xmlText);
     
     console.log('Parsed contracts:', parsedData.length);
+    console.log('Sample contract:', parsedData[0]);
 
     return {
       statusCode: 200,
@@ -162,7 +164,9 @@ function parseAtomFeed(xmlText) {
     const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
     let match;
     
+    let entryCount = 0;
     while ((match = entryRegex.exec(xmlText)) !== null) {
+      entryCount++;
       const entryContent = match[1];
       
       // Extract contract data from entry
@@ -172,10 +176,13 @@ function parseAtomFeed(xmlText) {
         agency: extractTag(entryContent, 'agencyID'),
         agencyName: extractTagAttribute(entryContent, 'agencyID', 'name'),
         
-        // Vendor info
-        vendorName: extractTag(entryContent, 'UEI_NAME') || extractTag(entryContent, 'vendorName'),
+        // Vendor info - try multiple tag names
+        vendorName: extractTag(entryContent, 'UEI_NAME') || 
+                    extractTag(entryContent, 'vendorName') ||
+                    extractTag(entryContent, 'UEILegalBusinessName'),
         vendorUEI: extractTag(entryContent, 'VENDOR_UEI'),
-        parentCompany: extractTag(entryContent, 'ULTIMATE_UEI_NAME'),
+        parentCompany: extractTag(entryContent, 'ULTIMATE_UEI_NAME') ||
+                       extractTag(entryContent, 'ultimateParentUEIName'),
         
         // Financial
         obligatedAmount: parseFloat(extractTag(entryContent, 'obligatedAmount') || '0'),
@@ -184,12 +191,16 @@ function parseAtomFeed(xmlText) {
         // Dates
         signedDate: extractTag(entryContent, 'signedDate'),
         startDate: extractTag(entryContent, 'effectiveDate'),
-        completionDate: extractTag(entryContent, 'currentCompletionDate'),
+        completionDate: extractTag(entryContent, 'currentCompletionDate') ||
+                       extractTag(entryContent, 'ultimateCompletionDate'),
         
         // Classification
-        naicsCode: extractTag(entryContent, 'NAICS_CODE') || extractTag(entryContent, 'principalNAICSCode'),
-        naicsDescription: extractTag(entryContent, 'NAICS_DESCRIPTION') || extractTag(entryContent, 'principalNAICSDescription'),
-        pscCode: extractTag(entryContent, 'PRODUCT_OR_SERVICE_CODE') || extractTag(entryContent, 'productOrServiceCode'),
+        naicsCode: extractTag(entryContent, 'principalNAICSCode') ||
+                   extractTag(entryContent, 'NAICS_CODE'),
+        naicsDescription: extractTag(entryContent, 'principalNAICSDescription') ||
+                         extractTag(entryContent, 'NAICS_DESCRIPTION'),
+        pscCode: extractTag(entryContent, 'productOrServiceCode') ||
+                 extractTag(entryContent, 'PRODUCT_OR_SERVICE_CODE'),
         
         // Set-aside
         setAside: extractTag(entryContent, 'typeOfSetAside'),
@@ -198,8 +209,13 @@ function parseAtomFeed(xmlText) {
         description: extractTag(entryContent, 'descriptionOfContractRequirement')
       };
       
-      contracts.push(contract);
+      // Only add if we have meaningful data
+      if (contract.piid || contract.vendorName || contract.obligatedAmount > 0) {
+        contracts.push(contract);
+      }
     }
+    
+    console.log(`Found ${entryCount} entries, parsed ${contracts.length} valid contracts`);
     
     return contracts;
     
