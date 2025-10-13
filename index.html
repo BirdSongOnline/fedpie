@@ -582,6 +582,59 @@
           c.setAside && (c.setAside.includes('8(A)') || c.setAside.includes('8A'))
         ).length;
         
+        // Historical Trends Analysis
+        const contractsByYear = {};
+        contracts.forEach(c => {
+          if (c.signedDate) {
+            const year = new Date(c.signedDate).getFullYear();
+            if (year >= 2020 && year <= 2025) { // Only last 5 years
+              if (!contractsByYear[year]) {
+                contractsByYear[year] = {
+                  count: 0,
+                  totalValue: 0,
+                  contracts: []
+                };
+              }
+              contractsByYear[year].count++;
+              contractsByYear[year].totalValue += c.obligatedAmount || 0;
+              contractsByYear[year].contracts.push(c);
+            }
+          }
+        });
+        
+        // Convert to sorted array
+        const yearlyData = Object.keys(contractsByYear)
+          .sort()
+          .map(year => ({
+            year: parseInt(year),
+            count: contractsByYear[year].count,
+            totalValue: contractsByYear[year].totalValue,
+            avgValue: contractsByYear[year].totalValue / contractsByYear[year].count
+          }));
+        
+        // Calculate trend
+        let trend = 'stable';
+        let trendPercentage = 0;
+        if (yearlyData.length >= 2) {
+          const recentYears = yearlyData.slice(-3); // Last 3 years
+          if (recentYears.length >= 2) {
+            const firstYear = recentYears[0].totalValue;
+            const lastYear = recentYears[recentYears.length - 1].totalValue;
+            
+            if (firstYear > 0) {
+              trendPercentage = ((lastYear - firstYear) / firstYear) * 100;
+              
+              if (trendPercentage > 15) {
+                trend = 'growing';
+              } else if (trendPercentage < -15) {
+                trend = 'declining';
+              } else {
+                trend = 'stable';
+              }
+            }
+          }
+        }
+        
         // Group by vendor
         const vendorMap = {};
         contracts.forEach(c => {
@@ -645,6 +698,12 @@
           totalValue: totalValue,
           setAsidePercent: contracts.length > 0 ? (setAsideCount / contracts.length * 100) : 0,
           topWinners: topWinners,
+          historicalTrends: {
+            yearlyData: yearlyData,
+            trend: trend,
+            trendPercentage: trendPercentage,
+            yearsAnalyzed: yearlyData.length
+          },
           recompeteAlerts: {
             expiring3Months: addMonthsUntilExpiration(expiring3Months),
             expiring6Months: addMonthsUntilExpiration(expiring6Months),
@@ -1690,6 +1749,96 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                                         </div>
                                       </div>
                                     )}
+                                  </div>
+                                )}
+
+                                {/* Historical Trends Section */}
+                                {fpdsInfo.historicalTrends && fpdsInfo.historicalTrends.yearsAnalyzed >= 2 && (
+                                  <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-4">
+                                    <h5 className="font-bold text-blue-900 mb-3 flex items-center gap-2">
+                                      📈 Market Trends Analysis
+                                    </h5>
+                                    
+                                    {/* Trend Summary */}
+                                    <div className="mb-3">
+                                      {fpdsInfo.historicalTrends.trend === 'growing' && (
+                                        <div className="flex items-center gap-2 bg-green-100 border border-green-300 rounded p-3">
+                                          <span className="text-2xl">📈</span>
+                                          <div className="flex-1">
+                                            <div className="font-bold text-green-900">Growing Market</div>
+                                            <div className="text-sm text-green-800">
+                                              Spending increased by {Math.abs(fpdsInfo.historicalTrends.trendPercentage).toFixed(0)}% over recent years
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                      
+                                      {fpdsInfo.historicalTrends.trend === 'declining' && (
+                                        <div className="flex items-center gap-2 bg-red-100 border border-red-300 rounded p-3">
+                                          <span className="text-2xl">📉</span>
+                                          <div className="flex-1">
+                                            <div className="font-bold text-red-900">Declining Market</div>
+                                            <div className="text-sm text-red-800">
+                                              Spending decreased by {Math.abs(fpdsInfo.historicalTrends.trendPercentage).toFixed(0)}% over recent years
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                      
+                                      {fpdsInfo.historicalTrends.trend === 'stable' && (
+                                        <div className="flex items-center gap-2 bg-gray-100 border border-gray-300 rounded p-3">
+                                          <span className="text-2xl">📊</span>
+                                          <div className="flex-1">
+                                            <div className="font-bold text-gray-900">Stable Market</div>
+                                            <div className="text-sm text-gray-700">
+                                              Spending has remained relatively consistent ({Math.abs(fpdsInfo.historicalTrends.trendPercentage).toFixed(0)}% change)
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                    
+                                    {/* Year-by-Year Breakdown */}
+                                    <div>
+                                      <div className="font-semibold text-blue-900 text-sm mb-2">
+                                        Spending by Year:
+                                      </div>
+                                      <div className="space-y-2">
+                                        {fpdsInfo.historicalTrends.yearlyData.map((yearData, idx) => {
+                                          const isCurrentYear = yearData.year === new Date().getFullYear();
+                                          return (
+                                            <div key={idx} className="bg-white rounded p-2 text-sm border border-blue-200">
+                                              <div className="flex justify-between items-center mb-1">
+                                                <span className="font-medium text-gray-900">
+                                                  {yearData.year} {isCurrentYear && '(YTD)'}
+                                                </span>
+                                                <span className="font-bold text-blue-900">
+                                                  {formatCurrency(yearData.totalValue)}
+                                                </span>
+                                              </div>
+                                              <div className="flex justify-between text-xs text-gray-600">
+                                                <span>{yearData.count} contract{yearData.count > 1 ? 's' : ''}</span>
+                                                <span>Avg: {formatCurrency(yearData.avgValue)}</span>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                    
+                                    {/* Strategic Insight */}
+                                    <div className="mt-3 text-sm text-blue-800 bg-blue-100 rounded p-3">
+                                      <strong>Strategic Insight:</strong>
+                                      {fpdsInfo.historicalTrends.trend === 'growing' && (
+                                        <span> This is an expanding market - agencies are increasing investment. Great time to pursue opportunities aggressively.</span>
+                                      )}
+                                      {fpdsInfo.historicalTrends.trend === 'declining' && (
+                                        <span> This market is contracting - agencies are reducing spending. Focus on incumbent replacement and efficiency-driven proposals.</span>
+                                      )}
+                                      {fpdsInfo.historicalTrends.trend === 'stable' && (
+                                        <span> This is a mature, stable market - consistent demand but moderate growth. Focus on differentiation and value-add services.</span>
+                                      )}
+                                    </div>
                                   </div>
                                 )}
 
