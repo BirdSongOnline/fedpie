@@ -587,7 +587,7 @@
         contracts.forEach(c => {
           if (c.signedDate) {
             const year = new Date(c.signedDate).getFullYear();
-            if (year >= 2020 && year <= 2025) { // Only last 5 years
+            if (year >= 2010 && year <= 2025) { // Last 15 years for better trend data
               if (!contractsByYear[year]) {
                 contractsByYear[year] = {
                   count: 0,
@@ -1843,7 +1843,7 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
                                 )}
 
                                 <div>
-                                  <h5 className="font-semibold text-indigo-900 mb-2">📊 Market Analysis (Last 2 Years)</h5>
+                                  <h5 className="font-semibold text-indigo-900 mb-2">📊 Market Analysis (Historical Data)</h5>
                                   <div className="space-y-2">
                                     <div className="flex justify-between bg-white rounded p-2 text-sm">
                                       <span className="text-gray-700">Similar Contracts:</span>
