@@ -24,11 +24,26 @@ exports.handler = async (event, context) => {
     let query = '';
     
     if (params.naics) {
-      // Query for contracts with this NAICS code
-      // Try without date filter first to see if there are ANY contracts
-      query = `PRINCIPAL_NAICS_CODE:"${params.naics}"`;
+      // Calculate date range for last 5 years
+      const today = new Date();
+      const fiveYearsAgo = new Date(today);
+      fiveYearsAgo.setFullYear(today.getFullYear() - 5);
+      
+      const formatDate = (date) => {
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const year = date.getFullYear();
+        return `${month}/${day}/${year}`;
+      };
+      
+      const startDate = formatDate(fiveYearsAgo);
+      const endDate = formatDate(today);
+      
+      // Query for contracts with this NAICS code from last 5 years
+      query = `PRINCIPAL_NAICS_CODE:"${params.naics}" SIGNED_DATE:[${startDate},${endDate}]`;
       
       console.log('Searching FPDS for NAICS:', params.naics);
+      console.log('Date range:', startDate, 'to', endDate);
     } else {
       // Fallback: get recent contracts from last month
       const today = new Date();
