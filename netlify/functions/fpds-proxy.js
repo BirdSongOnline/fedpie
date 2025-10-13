@@ -25,22 +25,10 @@ exports.handler = async (event, context) => {
     
     if (params.naics) {
       // Query for contracts with this NAICS code
+      // Try without date filter first to see if there are ANY contracts
       query = `PRINCIPAL_NAICS_CODE:"${params.naics}"`;
       
-      // Add date filter - look back 2 years
-      const today = new Date();
-      const twoYearsAgo = new Date(today);
-      twoYearsAgo.setFullYear(today.getFullYear() - 2);
-      
-      const formatDate = (date) => {
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const year = date.getFullYear();
-        return `${month}/${day}/${year}`;
-      };
-      
-      // Use LAST_MOD_DATE to get recent contracts
-      query += ` LAST_MOD_DATE:[${formatDate(twoYearsAgo)},${formatDate(today)}]`;
+      console.log('Searching FPDS for NAICS:', params.naics);
     } else {
       // Fallback: get recent contracts from last month
       const today = new Date();
