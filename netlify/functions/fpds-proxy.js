@@ -40,7 +40,8 @@ exports.handler = async (event, context) => {
       const endDate = formatDate(today);
       
       // Query for contracts with this NAICS code from last 5 years
-      query = `PRINCIPAL_NAICS_CODE:"${params.naics}" SIGNED_DATE:[${startDate},${endDate}]`;
+      // Use LAST_MOD_DATE since SIGNED_DATE often returns no results
+      query = `PRINCIPAL_NAICS_CODE:"${params.naics}" LAST_MOD_DATE:[${startDate},${endDate}]`;
       
       console.log('Searching FPDS for NAICS:', params.naics);
       console.log('Date range:', startDate, 'to', endDate);
