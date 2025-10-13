@@ -402,15 +402,22 @@ const [filterTimeframe, setFilterTimeframe] = useState('all');
 
       const loadProfileFromSupabase = async () => {
         try {
+          // Try to fetch existing profile
           const { data, error } = await supabaseClient
             .from('profiles')
             .select('*')
             .eq('id', user.id)
-            .single();
+            .maybeSingle(); // ← Changed from .single() to .maybeSingle()
 
-          if (error) throw error;
+          if (error) {
+            console.error('Error fetching profile:', error);
+            // Set default profile on error
+            setProfile(getDefaultProfile());
+            return;
+          }
 
           if (data) {
+            // Profile exists, use it
             setProfile({
               companyName: data.company_name || 'My Company',
               naicsCodes: data.naics_codes || [],
@@ -420,11 +427,47 @@ const [filterTimeframe, setFilterTimeframe] = useState('all');
               maxContractValue: data.max_contract_value || 50000000,
               minResponseDays: data.min_response_days || 7
             });
+          } else {
+            // No profile exists yet, create default and insert it
+            const defaultProfile = getDefaultProfile();
+            
+            const { error: insertError } = await supabaseClient
+              .from('profiles')
+              .insert({
+                id: user.id,
+                company_name: defaultProfile.companyName,
+                naics_codes: defaultProfile.naicsCodes,
+                set_asides: defaultProfile.setAsides,
+                target_agencies: defaultProfile.targetAgencies,
+                min_contract_value: defaultProfile.minContractValue,
+                max_contract_value: defaultProfile.maxContractValue,
+                min_response_days: defaultProfile.minResponseDays,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              });
+
+            if (insertError) {
+              console.error('Error creating profile:', insertError);
+            }
+            
+            setProfile(defaultProfile);
           }
         } catch (err) {
           console.error('Error loading profile:', err);
+          // Always set a default profile so app doesn't get stuck
+          setProfile(getDefaultProfile());
         }
       };
+
+      const getDefaultProfile = () => ({
+        companyName: 'My Company',
+        naicsCodes: [],
+        setAsides: [],
+        targetAgencies: [],
+        minContractValue: 100000,
+        maxContractValue: 50000000,
+        minResponseDays: 7
+      });
 
       const handleSaveProfile = async (newProfile) => {
         try {
