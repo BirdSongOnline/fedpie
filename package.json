@@ -1,0 +1,8 @@
+{
+  "name": "fedpie",
+  "version": "1.0.0",
+  "description": "Federal Procurement Intelligence Engine",
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  }
+}
