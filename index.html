@@ -1163,7 +1163,7 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
 if (profile && profile.naicsCodes && profile.naicsCodes.length > 0) {
   params.append('naics', profile.naicsCodes.join(','));
 }
-
+console.log('SAM.gov Query:', `${BACKEND_URL}?${params}`);
 const response = await fetch(`${BACKEND_URL}?${params}`);
           
           if (!response.ok) {
