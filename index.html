@@ -1152,14 +1152,19 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
             return `${month}/${day}/${year}`;
           };
 
-          const params = new URLSearchParams({
-            postedFrom: formatDateForAPI(searchParams.postedFrom),
-            postedTo: formatDateForAPI(searchParams.postedTo),
-            ptype: 'o',
-            limit: searchParams.limit.toString()
-          });
+         const params = new URLSearchParams({
+  postedFrom: formatDateForAPI(searchParams.postedFrom),
+  postedTo: formatDateForAPI(searchParams.postedTo),
+  ptype: 'o',
+  limit: searchParams.limit.toString()
+});
 
-          const response = await fetch(`${BACKEND_URL}?${params}`);
+// Add NAICS codes from profile to search query
+if (profile && profile.naicsCodes && profile.naicsCodes.length > 0) {
+  params.append('naics', profile.naicsCodes.join(','));
+}
+
+const response = await fetch(`${BACKEND_URL}?${params}`);
           
           if (!response.ok) {
             throw new Error(`API Error: ${response.status} ${response.statusText}`);
