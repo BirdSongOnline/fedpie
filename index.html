@@ -1084,7 +1084,7 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
       const applyFilters = (opps) => {
         let filtered = opps;
 
-      if (filtersEnabled) {
+ if (filtersEnabled) {
   filtered = filtered.filter(opp => {
     const matches = calculateRelevance(opp);
     
@@ -1101,7 +1101,19 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
     const passesValueFilter = !opp.award?.amount || matches.contractValue;
     const passesTimeFilter = !opp.responseDeadLine || matches.responseTime;
     
-    return hasRelevanceMatch && passesValueFilter && passesTimeFilter;
+    const passes = hasRelevanceMatch && passesValueFilter && passesTimeFilter;
+    
+    // DEBUG: Log why first 5 opportunities failed
+    if (!passes && filtered.length < 5) {
+      console.log('Filtered out:', opp.title, {
+        hasRelevanceMatch,
+        passesValueFilter,
+        passesTimeFilter,
+        matches
+      });
+    }
+    
+    return passes;
   });
 }
         // Apply Agency Filter (Dashboard filter)
