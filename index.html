@@ -251,7 +251,7 @@
                     Set-Aside Qualifications
                   </label>
                   <div className="space-y-2">
-                    {['8(a)', 'Small Business', 'SDB', 'WOSB', 'SDVOSB', 'HUBZone', 'ANC'].map(setAside => (
+                    {['8(a)', 'Small Business', 'SDB', 'WOSB', 'EDWOSB', 'SDVOSB', 'VOSB', 'HUBZone', 'ANC', 'Buy Indian', 'IEE', 'NHO'].map(setAside => (
                       <label key={setAside} className="flex items-center gap-2">
                         <input
                           type="checkbox"
@@ -1084,19 +1084,26 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
       const applyFilters = (opps) => {
         let filtered = opps;
 
-        // Apply Profile Filters (NAICS, Set-Aside, Contract Value, Response Time)
-        if (filtersEnabled) {
-          filtered = filtered.filter(opp => {
-            const matches = calculateRelevance(opp);
-            
-            const hasRelevanceMatch = matches.naics || matches.setAside;
-            const passesValueFilter = !opp.award?.amount || matches.contractValue;
-            const passesTimeFilter = !opp.responseDeadLine || matches.responseTime;
-            
-            return hasRelevanceMatch && passesValueFilter && passesTimeFilter;
-          });
-        }
-
+      if (filtersEnabled) {
+  filtered = filtered.filter(opp => {
+    const matches = calculateRelevance(opp);
+    
+    // Only require matches for filters that are configured
+    const hasNaicsConfig = profile.naicsCodes?.length > 0;
+    const hasSetAsideConfig = profile.setAsides?.length > 0;
+    
+    // If NAICS or Set-Aside is configured, at least one must match
+    let hasRelevanceMatch = true;
+    if (hasNaicsConfig || hasSetAsideConfig) {
+      hasRelevanceMatch = matches.naics || matches.setAside;
+    }
+    
+    const passesValueFilter = !opp.award?.amount || matches.contractValue;
+    const passesTimeFilter = !opp.responseDeadLine || matches.responseTime;
+    
+    return hasRelevanceMatch && passesValueFilter && passesTimeFilter;
+  });
+}
         // Apply Agency Filter (Dashboard filter)
         if (agencyFilter.length > 0) {
           filtered = filtered.filter(opp => {
