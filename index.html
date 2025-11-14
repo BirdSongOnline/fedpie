@@ -1105,26 +1105,6 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
         });
       };
     
-    return passes;
-  });
-}
-        // Apply Agency Filter (Dashboard filter)
-        if (agencyFilter.length > 0) {
-          filtered = filtered.filter(opp => {
-            const agency = opp.department || opp.fullParentPathName;
-            if (!agency) return false;
-            const mainAgency = agency.split('.')[0].trim();
-            return agencyFilter.includes(mainAgency);
-          });
-        }
-
-        // Sort by win probability
-        return filtered.sort((a, b) => {
-          const scoreA = calculateWinScore(a).score;
-          const scoreB = calculateWinScore(b).score;
-          return scoreB - scoreA;
-        });
-      };
 
       const isServicesContract = (opportunity) => {
         const naicsCode = opportunity.naicsCode;
