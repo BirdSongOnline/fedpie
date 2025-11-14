@@ -1081,37 +1081,29 @@ IMPORTANT: Respond ONLY with valid JSON. Do NOT include any markdown formatting,
         return matches;
       };
 
-      const applyFilters = (opps) => {
+   const applyFilters = (opps) => {
         let filtered = opps;
 
- if (filtersEnabled) {
-  filtered = filtered.filter(opp => {
-    const matches = calculateRelevance(opp);
-    
-    // Only require matches for filters that are configured
-    const hasNaicsConfig = profile.naicsCodes?.length > 0;
-    const hasSetAsideConfig = profile.setAsides?.length > 0;
-    
-    // If NAICS or Set-Aside is configured, at least one must match
-    let hasRelevanceMatch = true;
-    if (hasNaicsConfig || hasSetAsideConfig) {
-      hasRelevanceMatch = matches.naics || matches.setAside;
-    }
-    
-    const passesValueFilter = !opp.award?.amount || matches.contractValue;
-    const passesTimeFilter = !opp.responseDeadLine || matches.responseTime;
-    
-    const passes = hasRelevanceMatch && passesValueFilter && passesTimeFilter;
-    
-    // DEBUG: Log why first 5 opportunities failed
-    if (!passes && filtered.length < 5) {
-      console.log('Filtered out:', opp.title, {
-        hasRelevanceMatch,
-        passesValueFilter,
-        passesTimeFilter,
-        matches
-      });
-    }
+        // NO MORE PROFILE FILTERING - just keep all opportunities
+        // The win score will naturally prioritize NAICS/Set-Aside matches
+        
+        // Only apply Agency Filter (Dashboard filter)
+        if (agencyFilter.length > 0) {
+          filtered = filtered.filter(opp => {
+            const agency = opp.department || opp.fullParentPathName;
+            if (!agency) return false;
+            const mainAgency = agency.split('.')[0].trim();
+            return agencyFilter.includes(mainAgency);
+          });
+        }
+
+        // ALWAYS sort by win probability (high to low)
+        return filtered.sort((a, b) => {
+          const scoreA = calculateWinScore(a).score;
+          const scoreB = calculateWinScore(b).score;
+          return scoreB - scoreA;
+        });
+      };
     
     return passes;
   });
@@ -1536,16 +1528,9 @@ const response = await fetch(`${BACKEND_URL}?${params}`);
                 >
                   {servicesFilterEnabled ? '✓ Services Only' : 'Show All Types'}
                 </button>
-                <button
-                  onClick={() => setFiltersEnabled(!filtersEnabled)}
-                  className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
-                    filtersEnabled 
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {filtersEnabled ? '✓ Profile Filters' : 'Profile Filters Off'}
-                </button>
+                <div className="px-4 py-2 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium border border-blue-200">
+                  📊 Sorted by Win Score
+                </div>
                 <button
                   onClick={() => setShowAgencyFilter(true)}
                   className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
